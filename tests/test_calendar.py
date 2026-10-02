@@ -153,3 +153,54 @@ def test_api_chinese():
 
 def test_api_rejects_unknown_lang():
     assert client.get("/api/events", params={"lang": "fr"}).status_code == 422
+
+
+# --- live quotes ----------------------------------------------------------
+
+from app import quotes as Q  # noqa: E402
+
+FAKE_YAHOO = {"chart": {"result": [{
+    "meta": {"symbol": "GC=F", "shortName": "Gold Dec 26", "currency": "USD", "fullExchangeName": "COMEX",
+             "regularMarketPrice": 103.0, "regularMarketTime": 1790932800, "gmtoffset": -14400, "chartPreviousClose": 50.0},
+    # Two bars on Oct 1 (ET), two on Oct 2 (ET); one bar with missing data.
+    "timestamp": [1790798400, 1790802000, 1790884800, 1790888400, 1790892000],
+    "indicators": {"quote": [{"open": [99, 100, None, 102, 103], "high": [100, 101, None, 103, 104],
+                              "low": [98, 99, None, 101, 102], "close": [100, 101, None, 102, 103], "volume": [5, 6, None, 7, None]}]},
+}]}}
+
+
+@pytest.fixture
+def fake_yahoo(monkeypatch):
+    calls = []
+    monkeypatch.setattr(Q, "_fetch", lambda url: calls.append(url) or FAKE_YAHOO)
+    Q._cache.clear()
+    yield calls
+    Q._cache.clear()
+
+
+def test_kline_parses_and_computes_prev_close(fake_yahoo):
+    body = client.get("/api/kline", params={"symbol": "GC=F", "interval": "5m"}).json()
+    assert [b["close"] for b in body["bars"]] == [100, 101, 102, 103]  # null bar dropped
+    assert body["bars"][-1]["volume"] == 0
+    assert body["prev_close"] == 101  # last close of the previous exchange-local day
+    assert body["delayed_min"] == 10 and body["name"] == "Gold Dec 26"
+
+
+def test_kline_is_cached(fake_yahoo):
+    client.get("/api/kline", params={"symbol": "SPY", "interval": "1m"})
+    client.get("/api/kline", params={"symbol": "spy", "interval": "1m"})
+    assert len(fake_yahoo) == 1
+
+
+@pytest.mark.parametrize("symbol", ["../etc", "A B", "x" * 20, "http://evil"])
+def test_kline_rejects_bad_symbols(fake_yahoo, symbol):
+    assert client.get("/api/kline", params={"symbol": symbol}).status_code in (400, 422)
+    assert not fake_yahoo
+
+
+def test_kline_rejects_bad_interval(fake_yahoo):
+    assert client.get("/api/kline", params={"symbol": "SPY", "interval": "3m"}).status_code == 422
+
+
+def test_markets_page_served():
+    assert "lightweight-charts" in client.get("/markets").text

@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Live Markets</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/styles.css" />
+  <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">◆</span>
+      <div>
+        <h1 data-i18n="title"></h1>
+        <p class="sub" data-i18n="subtitle"></p>
+      </div>
+    </div>
+    <div class="top-actions">
+      <nav class="tabs">
+        <a href="/" data-i18n="navCalendar"></a>
+        <a href="/markets" class="on" data-i18n="navMarkets"></a>
+      </nav>
+      <div class="lang-toggle" role="group" aria-label="Language">
+        <button class="seg" data-lang="en">EN</button>
+        <button class="seg" data-lang="zh">中文</button>
+      </div>
+    </div>
+  </header>
+
+  <section class="toolbar">
+    <div class="view-toggle" id="intervals" role="group" aria-label="Interval">
+      <button class="seg" data-int="1m">1m</button>
+      <button class="seg" data-int="5m">5m</button>
+      <button class="seg" data-int="15m">15m</button>
+      <button class="seg" data-int="1h">1H</button>
+      <button class="seg" data-int="1d">1D</button>
+    </div>
+    <div class="view-toggle" id="colorMode" role="group">
+      <button class="seg" data-colors="green-up" data-i18n="greenUp"></button>
+      <button class="seg" data-colors="red-up" data-i18n="redUp"></button>
+    </div>
+  </section>
+
+  <main id="panels" class="panels"></main>
+
+  <p class="legend">
+    <span><i class="mk-flag"></i> <span data-i18n="legendMarker"></span></span>
+    <span data-i18n="legendTime"></span>
+  </p>
+  <p class="disclaimer" data-i18n="disclaimer"></p>
+
+  <script src="/static/markets.js"></script>
+</body>
+</html>

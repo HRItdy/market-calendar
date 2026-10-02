@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import events as E
+from . import quotes as Q
 from .impact import PROFILES, profile
 
 Lang = Literal["en", "zh"]
@@ -158,6 +159,21 @@ def ics(start: date | None = None, end: date | None = None,
                   f"DESCRIPTION:{_ics_escape(desc)}", "END:VEVENT"]
     lines.append("END:VCALENDAR")
     return PlainTextResponse("\r\n".join(lines) + "\r\n", media_type="text/calendar")
+
+
+@app.get("/api/kline")
+def kline(symbol: str = Query(..., max_length=16), interval: Literal["1m", "5m", "15m", "1h", "1d"] = "5m"):
+    """Candles for gold futures and US stocks/indices (crypto streams from Binance in the browser)."""
+    try:
+        return Q.candles(symbol, interval)
+    except Q.QuoteError as exc:
+        msg = str(exc)
+        raise HTTPException(400 if msg.startswith("invalid") or msg == "unknown symbol" else 502, msg)
+
+
+@app.get("/markets", include_in_schema=False)
+def markets_page():
+    return FileResponse(STATIC / "markets.html")
 
 
 @app.get("/", include_in_schema=False)
