@@ -38,7 +38,11 @@
       <button class="seg" data-int="1h">1H</button>
       <button class="seg" data-int="1d">1D</button>
     </div>
-    <button class="chip of-toggle" id="ofToggle" aria-pressed="true"><i class="dot" style="background:#f59e0b"></i><span data-i18n="orderFlow"></span></button>
+    <div class="theories" role="group" aria-label="Analysis">
+      <button class="chip theory" data-theory="of" aria-pressed="false"><i class="dot" style="background:#f59e0b"></i><span></span></button>
+      <button class="chip theory" data-theory="chan" aria-pressed="false"><i class="dot" style="background:#0891b2"></i><span></span></button>
+      <button class="chip theory" data-theory="pa" aria-pressed="false"><i class="dot" style="background:#0d9488"></i><span></span></button>
+    </div>
     <div class="view-toggle" id="colorMode" role="group">
       <button class="seg" data-colors="green-up" data-i18n="greenUp"></button>
       <button class="seg" data-colors="red-up" data-i18n="redUp"></button>
@@ -53,7 +57,11 @@
   </p>
   <p class="disclaimer" data-i18n="disclaimer"></p>
 
+  <script src="/static/markets-i18n.js"></script>
   <script src="/static/orderflow.js"></script>
+  <script src="/static/chan.js"></script>
+  <script src="/static/pa.js"></script>
+  <script src="/static/combine.js"></script>
   <script src="/static/markets.js"></script>
 </body>
 </html>

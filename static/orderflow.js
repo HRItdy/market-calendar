@@ -217,7 +217,25 @@
     const signals = detectSignals(bars);
     const hasVolume = bars.some((b) => b.volume > 0);
     const suggestion = hasVolume ? suggest({ bars, vw, profile, signals, estimated, delayed }) : null;
-    return { bars, estimated, vw, profile, signals, suggestion, hasVolume };
+    return { bars, estimated, vw, profile, signals, suggestion, hasVolume, read: suggestion && toRead(bars, vw, profile, suggestion) };
+  }
+
+  // Theory read for the combiner (see combine.js).
+  function toRead(bars, vw, profile, s) {
+    const v = vw[vw.length - 1];
+    const recent = bars.slice(-20);
+    const swingHi = Math.max(...recent.map((b) => b.high)), swingLo = Math.min(...recent.map((b) => b.low));
+    const levels = [{ price: profile.poc, label: "POC" }, { price: profile.vah, label: "VAH" }, { price: profile.val, label: "VAL" },
+                    { price: swingHi, label: "swing-high" }, { price: swingLo, label: "swing-low" }];
+    if (v && v.vwap) {
+      levels.push({ price: v.vwap, label: "VWAP" });
+      for (const k of [1, 2]) levels.push({ price: v.vwap + k * v.sd, label: `VWAP+${k}σ` }, { price: v.vwap - k * v.sd, label: `VWAP−${k}σ` });
+    }
+    const price = s.price;
+    return {
+      theory: "of", score: s.score, max: 5, reasons: s.reasons, levels,
+      stops: { long: price > profile.val ? profile.val : swingLo, short: price < profile.vah ? profile.vah : swingHi },
+    };
   }
 
   const api = { withDelta, vwap, volumeProfile, atr, detectSignals, suggest, analyze };

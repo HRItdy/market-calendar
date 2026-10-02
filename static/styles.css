@@ -217,17 +217,27 @@ h2 { font-size: 16px; }
 .mk-flag { display: inline-block; width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 8px solid var(--accent); vertical-align: middle; }
 
 /* order flow */
-.of-toggle { margin-left: auto; }
-.profile-canvas { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
-.delta-wrap { position: relative; border-top: 1px dashed var(--line); }
-.delta-chart { height: 110px; }
-.delta-legend { position: absolute; top: 4px; left: 8px; font-size: 12px; color: var(--muted); display: flex; gap: 10px; pointer-events: none; z-index: 3; font-variant-numeric: tabular-nums; }
+.theories { display: flex; gap: 6px; flex-wrap: wrap; margin-left: auto; }
+.overlay-canvas { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
+.sub-wrap { position: relative; border-top: 1px dashed var(--line); }
+.sub-chart { height: 110px; }
+.sub-legend { position: absolute; top: 4px; left: 8px; font-size: 12px; color: var(--muted); display: flex; gap: 10px; pointer-events: none; z-index: 3; font-variant-numeric: tabular-nums; }
 .of-card { margin-top: 12px; border: 1px solid var(--line); border-radius: 10px; padding: 12px; background: var(--bg); }
 .of-card:empty { display: none; }
 .of-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
 .of-head h4 { margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: .05em; }
 .of-sub { color: var(--muted); font-size: 12px; }
-.of-grid { display: grid; grid-template-columns: 170px 240px 1fr; gap: 14px; align-items: start; }
+.of-grid { display: grid; grid-template-columns: 170px 250px 1fr; gap: 14px; align-items: start; }
+.th-chips { display: flex; gap: 4px; flex-wrap: wrap; }
+.th-chip { font-size: 11px; border-radius: 999px; padding: 1px 8px; border: 1px solid var(--line); background: var(--panel); }
+.th-chip.of { border-color: #f59e0b; } .th-chip.chan { border-color: #0891b2; } .th-chip.pa { border-color: #0d9488; }
+.th-groups { display: grid; gap: 10px; }
+.th-group { border-left: 3px solid var(--line); padding-left: 10px; }
+.th-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.th-name { font-weight: 700; font-size: 13px; }
+.th-lean { font-size: 11px; font-weight: 700; border-radius: 4px; padding: 0 6px; color: #fff; background: var(--low); }
+.th-lean.buy { background: #16a34a; } .th-lean.sell { background: #dc2626; }
+.th-norm { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .of-bias { border-radius: 10px; padding: 12px; background: var(--panel); border: 1px solid var(--line); text-align: center; }
 .bias-pill { font-size: 22px; font-weight: 800; letter-spacing: .04em; border-radius: 8px; padding: 6px 0; color: #fff; background: var(--low); }
 .of-bias.buy .bias-pill { background: #16a34a; }
@@ -278,7 +288,7 @@ dialog input, dialog select, dialog textarea { font: inherit; font-weight: 400; 
   .top-actions { flex-wrap: wrap; }
   .chart { height: 300px; }
   .of-grid { grid-template-columns: 1fr; }
-  .of-toggle { margin-left: 0; }
+  .theories { margin-left: 0; }
   .up-ev { grid-template-columns: 1fr; gap: 0; }
   .up-why { white-space: normal; }
   .status { margin-left: 0; }

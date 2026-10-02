@@ -1,124 +1,16 @@
 "use strict";
 
-/* Live K-line (candlestick) panels for Web3, Gold and US stocks, with an order-flow layer.
- * - Binance symbols stream tick-by-tick over WebSocket straight from the browser, including
- *   taker-buy volume, so delta/CVD are real aggressor data.
- * - Yahoo symbols (gold futures, US stocks) come via /api/kline and refresh every 10s; their
- *   delta is estimated from candle shape (no aggressor data on that feed).
- * - Order flow (static/orderflow.js): volume profile (POC/VAH/VAL), session VWAP ±σ, delta + CVD
- *   pane, absorption/divergence markers, and a rule-based buy/sell/wait read with levels.
- * - High-impact calendar events for each market are drawn on the chart as markers. */
+/* Live K-line panels for Web3, Gold and US stocks, analysed with up to three theories the
+ * viewer switches on: Order flow (orderflow.js), Chan Lun (chan.js) and Price action (pa.js).
+ * combine.js merges the selected theories into one BUY / SELL / WAIT read with a plan.
+ *
+ * Data: Binance symbols stream over WebSocket in the browser (real taker-buy volume);
+ * Yahoo symbols (gold futures, US stocks) come via /api/kline every 10s.
+ * High-impact calendar events for each market are marked on the chart. */
 
-const I18N = {
-  en: {
-    title: "Live Markets", subtitle: "Real-time K-lines with order flow and the calendar events that move them",
-    navCalendar: "Calendar", navMarkets: "Live markets",
-    greenUp: "Green up", redUp: "Red up", orderFlow: "Order flow",
-    web3: "Web3", gold: "Gold", us: "US stocks",
-    live: "Live", polling: "Live · 10s refresh", delayed: (m) => `Delayed ~${m} min`,
-    closed: (t) => `Market closed · last ${t}`, connecting: "Connecting…", error: "Data unavailable",
-    upcoming: "Upcoming events for this market", noUpcoming: "No high-sensitivity events in the next 30 days.",
-    vs: { "1d": "vs prev. close", crypto: "24h" },
-    search: "Ticker, e.g. AMD", go: "Add",
-    o: "O", h: "H", l: "L", c: "C", v: "Vol", delta: "Δ", cvd: "CVD",
-    legendMarker: "Past high-impact events for that market (data-release dates are estimated and may be off by a few days)",
-    legendTime: "Chart times are in your local time zone",
-    disclaimer: "For education only, not investment advice. The order-flow read is a rule-based model, not a prediction; markets can ignore every level. Crypto data from Binance; gold futures and US stocks from Yahoo Finance.",
-    ofTitle: (iv) => `Order-flow read · ${iv}`,
-    bias: { buy: "BUY", sell: "SELL", wait: "WAIT" },
-    biasSub: { buy: "Long bias", sell: "Short bias", wait: "No edge: let price come to a level" },
-    confidence: "Confidence", score: "Score",
-    entry: "Entry", stop: "Stop", t1: "Target 1", t2: "Target 2", rr: "R:R",
-    entryNote: { pull: "pullback to support", mkt: "at market" },
-    entrySell: { pull: "rally into resistance", mkt: "at market" },
-    longAbove: "Long on acceptance above VAH", shortBelow: "Short on acceptance below VAL", magnet: "POC magnet",
-    profileOf: (p) => `Volume profile: last ${p}`,
-    deltaReal: "Delta: real taker buy/sell volume (Binance)",
-    deltaEst: "Delta: estimated from candle shape; this feed has no buy/sell split, so treat signals as weaker",
-    delayedNote: (m) => `Data is delayed ~${m} min; levels may already have been tested`,
-    noVolume: "This symbol has no volume data, so order-flow analysis isn't available.",
-    sig: { absorption: "Abs", divergence: "Div" },
-    R: {
-      aboveVwap: ({ vwap }) => `Price is above session VWAP (${vwap}): buyers hold the session average.`,
-      belowVwap: ({ vwap }) => `Price is below session VWAP (${vwap}): sellers hold the session average.`,
-      stretchedUp: ({ z }) => `Price is ${z}σ above VWAP: stretched; responsive sellers often fade moves this far.`,
-      stretchedDown: ({ z }) => `Price is ${z}σ below VWAP: stretched; responsive buyers often step in this far out.`,
-      aboveValue: ({ vah }) => `Trading above value (VAH ${vah}): acceptance up here means initiative buyers are in control.`,
-      belowValue: ({ val }) => `Trading below value (VAL ${val}): acceptance down here means initiative sellers are in control.`,
-      insideValue: ({ val, vah, poc }) => `Inside value (${val}–${vah}): rotational trade; the edges tend to reject back toward POC ${poc}.`,
-      cvdConfirmUp: ({ pct }) => `Price up with rising CVD (net ${pct} of volume bought aggressively): buyers confirm the move.`,
-      cvdConfirmDown: ({ pct }) => `Price down with falling CVD (net ${pct} of volume sold aggressively): sellers confirm the move.`,
-      cvdDivergeUp: () => "Price rose but CVD fell: the rally isn't backed by aggressive buyers (passive bids / short covering), so follow-through is less reliable.",
-      cvdDivergeDown: () => "Price fell but CVD rose: the drop isn't driven by aggressive sellers, so downside follow-through is less reliable.",
-      cvdFlat: () => "CVD is flat: neither side is pressing with market orders.",
-      absorption_buy: () => "Recent bullish absorption: heavy aggressive selling failed to push price lower (passive buyers absorbing).",
-      absorption_sell: () => "Recent bearish absorption: heavy aggressive buying failed to lift price (passive sellers absorbing).",
-      divergence_buy: () => "Recent bullish delta divergence: a new low without new selling pressure in CVD (seller exhaustion).",
-      divergence_sell: () => "Recent bearish delta divergence: a new high without new buying pressure in CVD (buyer exhaustion).",
-      buyersAggressive: ({ pct }) => `Last 5 bars: buyers aggressive (net delta ${pct}).`,
-      sellersAggressive: ({ pct }) => `Last 5 bars: sellers aggressive (net delta ${pct}).`,
-    },
-  },
-  zh: {
-    title: "实时行情", subtitle: "实时K线、订单流分析，并标注影响行情的日历事件",
-    navCalendar: "事件日历", navMarkets: "实时行情",
-    greenUp: "绿涨红跌", redUp: "红涨绿跌", orderFlow: "订单流",
-    web3: "Web3", gold: "黄金", us: "美股",
-    live: "实时", polling: "实时 · 每10秒刷新", delayed: (m) => `延迟约${m}分钟`,
-    closed: (t) => `已休市 · 最后更新 ${t}`, connecting: "连接中…", error: "数据暂不可用",
-    upcoming: "该市场即将到来的事件", noUpcoming: "未来30天没有高敏感度事件。",
-    vs: { "1d": "较前收盘", crypto: "24小时" },
-    search: "代码，如 AMD", go: "添加",
-    o: "开", h: "高", l: "低", c: "收", v: "量", delta: "Δ", cvd: "CVD",
-    legendMarker: "该市场过往的高影响事件（数据发布日期为预估，可能有几天偏差）",
-    legendTime: "图表时间为你的本地时区",
-    disclaimer: "仅供学习参考，不构成投资建议。订单流解读基于规则模型，并非预测；市场可能无视任何价位。加密货币数据来自币安；黄金期货和美股数据来自雅虎财经。",
-    ofTitle: (iv) => `订单流解读 · ${iv}`,
-    bias: { buy: "做多", sell: "做空", wait: "观望" },
-    biasSub: { buy: "偏多", sell: "偏空", wait: "暂无优势：等待价格到达关键位" },
-    confidence: "置信度", score: "得分",
-    entry: "入场", stop: "止损", t1: "目标1", t2: "目标2", rr: "盈亏比",
-    entryNote: { pull: "回踩支撑", mkt: "市价" },
-    entrySell: { pull: "反弹至阻力", mkt: "市价" },
-    longAbove: "站稳VAH上方做多", shortBelow: "跌破VAL并站稳做空", magnet: "POC磁吸位",
-    profileOf: (p) => `成交量分布：最近${p}`,
-    deltaReal: "Delta：币安真实主动买卖量",
-    deltaEst: "Delta：根据K线形态估算（该数据源无买卖拆分），信号可靠性较低",
-    delayedNote: (m) => `数据延迟约${m}分钟，价位可能已被测试`,
-    noVolume: "该品种没有成交量数据，无法进行订单流分析。",
-    sig: { absorption: "吸收", divergence: "背离" },
-    R: {
-      aboveVwap: ({ vwap }) => `价格位于当日VWAP（${vwap}）上方：买方掌控当日均价。`,
-      belowVwap: ({ vwap }) => `价格位于当日VWAP（${vwap}）下方：卖方掌控当日均价。`,
-      stretchedUp: ({ z }) => `价格高于VWAP ${z}σ：偏离过大，回应型卖方常在此处反向操作。`,
-      stretchedDown: ({ z }) => `价格低于VWAP ${z}σ：偏离过大，回应型买方常在此处入场。`,
-      aboveValue: ({ vah }) => `价格在价值区上方（VAH ${vah}）：若在此被接受，说明主动买方占优。`,
-      belowValue: ({ val }) => `价格在价值区下方（VAL ${val}）：若在此被接受，说明主动卖方占优。`,
-      insideValue: ({ val, vah, poc }) => `价格处于价值区内（${val}–${vah}）：震荡行情，边缘易被拒绝并回归POC ${poc}。`,
-      cvdConfirmUp: ({ pct }) => `价格上涨且CVD上升（主动净买入占成交量${pct}）：买方确认上涨。`,
-      cvdConfirmDown: ({ pct }) => `价格下跌且CVD下降（主动净卖出占成交量${pct}）：卖方确认下跌。`,
-      cvdDivergeUp: () => "价格上涨但CVD下降：上涨并非由主动买盘推动（被动买单/空头回补），延续性较弱。",
-      cvdDivergeDown: () => "价格下跌但CVD上升：下跌并非由主动卖盘推动，下行延续性较弱。",
-      cvdFlat: () => "CVD走平：多空双方都没有用市价单主动推进。",
-      absorption_buy: () => "近期出现看涨吸收：大量主动卖单未能压低价格（被动买方在吸收）。",
-      absorption_sell: () => "近期出现看跌吸收：大量主动买单未能推高价格（被动卖方在吸收）。",
-      divergence_buy: () => "近期出现看涨Delta背离：价格创新低但CVD未创新低（卖方衰竭）。",
-      divergence_sell: () => "近期出现看跌Delta背离：价格创新高但CVD未创新高（买方衰竭）。",
-      buyersAggressive: ({ pct }) => `最近5根K线：买方主动（净Delta ${pct}）。`,
-      sellersAggressive: ({ pct }) => `最近5根K线：卖方主动（净Delta ${pct}）。`,
-    },
-  },
-};
-
-// Short marker labels per event type.
-const SHORT = {
-  en: { fomc: "FOMC", fomc_sep: "FOMC", fomc_minutes: "Minutes", cpi: "CPI", ppi: "PPI", pce: "PCE", nfp: "NFP", jolts: "JOLTS",
-        retail: "Retail", gdp: "GDP", ism_mfg: "ISM", ism_svc: "ISM", earnings_megacap: "Big Tech", earnings_nvda: "NVDA",
-        earnings_banks: "Banks", jackson_hole: "J. Hole", election: "Election", refunding: "Refunding", umich: "UMich" },
-  zh: { fomc: "议息", fomc_sep: "议息", fomc_minutes: "纪要", cpi: "CPI", ppi: "PPI", pce: "PCE", nfp: "非农", jolts: "JOLTS",
-        retail: "零售", gdp: "GDP", ism_mfg: "ISM", ism_svc: "ISM", earnings_megacap: "科技财报", earnings_nvda: "英伟达",
-        earnings_banks: "银行财报", jackson_hole: "央行年会", election: "选举", refunding: "再融资", umich: "密大" },
-};
+const I18N = window.MKT_I18N;
+const SHORT = window.MKT_SHORT;
+const THEORIES = ["of", "chan", "pa"];
 
 const GROUPS = [
   { key: "web3", market: "btc", symbols: [
@@ -151,11 +43,12 @@ const BINANCE_WS = "wss://data-stream.binance.vision/stream?streams=";
 const POLL_MS = 10_000;
 const ANALYSIS_THROTTLE_MS = 1500;
 const INTERVAL_SEC = { "1m": 60, "5m": 300, "15m": 900, "1h": 3600, "1d": 86400 };
-// How many bars the volume profile covers, and how that reads to a human.
 const PROFILE_BARS = { "1m": 240, "5m": 288, "15m": 192, "1h": 168, "1d": 120 };
 const PROFILE_SPAN = { en: { "1m": "4 hours", "5m": "24 hours", "15m": "2 days", "1h": "7 days", "1d": "120 days" },
                        zh: { "1m": "4小时", "5m": "24小时", "15m": "2天", "1h": "7天", "1d": "120天" } };
-const SCALE_WIDTH = 78; // shared min price-scale width keeps the main and delta panes aligned
+const SCALE_WIDTH = 78;         // shared min price-scale width keeps the panes aligned
+const PA_LABEL_SWINGS = 8;      // HH/HL/LH/LL labels on the most recent swings only
+const PA_PATTERN_BARS = 30;     // pattern markers within the most recent bars only
 
 // ---------- helpers ----------
 const $ = (s, root = document) => root.querySelector(s);
@@ -165,13 +58,15 @@ function save(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); 
 
 const params = new URLSearchParams(location.search);
 const initialLang = params.get("lang") || load("mc.lang", null) || (navigator.language?.toLowerCase().startsWith("zh") ? "zh" : "en");
+const initialTheories = params.has("t") ? params.get("t").split(",") : load("mc.theories", ["of"]);
 const state = {
   lang: I18N[initialLang] ? initialLang : "en",
   interval: params.get("interval") in INTERVAL_SEC ? params.get("interval") : load("mc.interval", "5m"),
   colors: load("mc.colors", null), // null → follow language convention
-  of: params.has("of") ? params.get("of") !== "0" : load("mc.of", true),
+  theories: new Set(initialTheories.filter((x) => THEORIES.includes(x))),
   events: [],
 };
+const on = (th) => state.theories.has(th);
 const t = (k) => I18N[state.lang][k];
 const LOCALE = () => (state.lang === "zh" ? "zh-CN" : "en-US");
 const labelOf = (s) => (typeof s.label === "string" ? s.label : s.label[state.lang]);
@@ -181,8 +76,8 @@ const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v
 function palette() {
   const green = "#16a34a", red = "#dc2626";
   const [up, down] = colorMode() === "red-up" ? [red, green] : [green, red];
-  return { up, down, bg: css("--panel"), text: css("--muted"), grid: css("--line"), accent: css("--accent"),
-           vwap: "#f59e0b", poc: "#8b5cf6", va: "#8b5cf6" };
+  return { up, down, bg: css("--panel"), text: css("--muted"), grid: css("--line"), accent: css("--accent"), ink: css("--ink"),
+           vwap: "#f59e0b", poc: "#8b5cf6", stroke: "#0891b2", segment: "#db2777", pivot: "#0891b2", ema: "#0d9488", zone: "#a16207" };
 }
 const alpha = (hex, a) => hex + Math.round(a * 255).toString(16).padStart(2, "0");
 
@@ -190,10 +85,8 @@ const alpha = (hex, a) => hex + Math.round(a * 255).toString(16).padStart(2, "0"
 const toLocal = (sec) => sec - new Date(sec * 1000).getTimezoneOffset() * 60;
 const toDay = (sec) => new Date(sec * 1000).toISOString().slice(0, 10);
 const chartTime = (sec, interval) => (interval === "1d" ? toDay(sec) : toLocal(sec));
-// Crosshair events may report daily times as {year, month, day}; normalise to one key format.
 const timeKey = (tm) => (typeof tm === "object" ? `${tm.year}-${String(tm.month).padStart(2, "0")}-${String(tm.day).padStart(2, "0")}` : String(tm));
 
-// Convert an ET wall-clock date/time to a UTC epoch (DST-aware via Intl).
 function etToEpoch(dateStr, timeStr) {
   const [y, m, d] = dateStr.split("-").map(Number);
   const [hh, mm] = (timeStr || "09:30").split(":").map(Number);
@@ -205,11 +98,7 @@ function etToEpoch(dateStr, timeStr) {
   return (guess + (guess - wall)) / 1000;
 }
 
-function precisionFor(price) {
-  if (price >= 1) return 2;
-  if (price >= 0.01) return 4;
-  return 6;
-}
+const precisionFor = (price) => (price >= 1 ? 2 : price >= 0.01 ? 4 : 6);
 const fmtNum = (n, p = 2) => (n == null || Number.isNaN(n) ? "–" : n.toLocaleString(LOCALE(), { minimumFractionDigits: p, maximumFractionDigits: p }));
 const fmtVol = (v) => {
   const a = Math.abs(v), s = v < 0 ? "−" : "";
@@ -241,7 +130,7 @@ class Panel {
   constructor(group) {
     this.g = group;
     this.selected = load(`mc.sym.${group.key}`, group.symbols[0].id);
-    this.extra = load(`mc.extra.${group.key}`, []); // user-added tickers (US panel)
+    this.extra = load(`mc.extra.${group.key}`, []);
     this.priceLines = [];
     this.el = document.createElement("section");
     this.el.className = "mkt-panel";
@@ -265,8 +154,9 @@ class Panel {
         <span class="q-name"></span><span class="q-price"></span><span class="q-chg"></span><span class="q-ref"></span>
         <span class="status"><i></i><span></span></span>
       </div>
-      <div class="chart-wrap"><div class="chart"></div><canvas class="profile-canvas"></canvas><div class="ohlc"></div></div>
-      <div class="delta-wrap"><div class="delta-chart"></div><div class="delta-legend"><span class="dl-delta">${t("delta")}</span> <span class="dl-cvd">${t("cvd")}</span></div></div>
+      <div class="chart-wrap"><div class="chart"></div><canvas class="overlay-canvas"></canvas><div class="ohlc"></div></div>
+      <div class="sub-wrap" data-pane="of"><div class="sub-chart"></div><div class="sub-legend"><span class="dl-a">${t("delta")}</span> <span class="dl-b">${t("cvd")}</span></div></div>
+      <div class="sub-wrap" data-pane="chan"><div class="sub-chart"></div><div class="sub-legend"><span class="dl-a">${t("macd")}</span> <span class="dl-b"></span></div></div>
       <div class="of-card"></div>
       <div class="upcoming"><h4>${esc(t("upcoming"))}</h4><div class="up-list"></div></div>`;
     this.renderChips();
@@ -294,26 +184,39 @@ class Panel {
     this.volume = this.chart.addHistogramSeries({ priceFormat: { type: "volume" }, priceScaleId: "", lastValueVisible: false, priceLineVisible: false });
     this.volume.priceScale().applyOptions({ scaleMargins: { top: 0.84, bottom: 0 } });
     const line = (opts) => this.chart.addLineSeries({ lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false, ...opts });
+    // Order flow
     this.vwapLine = line({ lineWidth: 2 });
-    this.bands = [1, 2].flatMap((k) => [line({ lineWidth: 1, lineStyle: k === 1 ? 2 : 1 }), line({ lineWidth: 1, lineStyle: k === 1 ? 2 : 1 })]);
+    this.bands = [1, 1, 2, 2].map((k) => line({ lineWidth: 1, lineStyle: k === 1 ? 2 : 1 }));
+    // Chan Lun: strokes (笔) and segments (线段) as zig-zags through the fractal vertices
+    this.strokeLine = line({ lineWidth: 1 });
+    this.segmentLine = line({ lineWidth: 3 });
+    // Price action: 20 EMA
+    this.emaLine = line({ lineWidth: 2, lineStyle: 0 });
 
-    // Delta + CVD pane, kept in lockstep with the main chart's time axis.
-    this.sub = LC.createChart($(".delta-chart", this.el), {
+    const sub = (host) => LC.createChart(host, {
       autoSize: true,
       timeScale: { visible: false, rightOffset: 6 },
       rightPriceScale: { minimumWidth: SCALE_WIDTH, scaleMargins: { top: 0.1, bottom: 0.1 } },
       crosshair: { mode: LC.CrosshairMode.Normal, horzLine: { visible: false, labelVisible: false } },
       handleScale: false, handleScroll: false,
     });
-    this.deltaSeries = this.sub.addHistogramSeries({ priceFormat: { type: "volume" }, priceLineVisible: false, lastValueVisible: false });
-    this.cvdSeries = this.sub.addLineSeries({ priceScaleId: "cvd", lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
-    this.sub.priceScale("cvd").applyOptions({ scaleMargins: { top: 0.1, bottom: 0.1 } });
+    const [ofHost, chanHost] = this.el.querySelectorAll(".sub-chart");
+    this.ofPane = sub(ofHost);
+    this.deltaSeries = this.ofPane.addHistogramSeries({ priceFormat: { type: "volume" }, priceLineVisible: false, lastValueVisible: false });
+    this.cvdSeries = this.ofPane.addLineSeries({ priceScaleId: "cvd", lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+    this.ofPane.priceScale("cvd").applyOptions({ scaleMargins: { top: 0.1, bottom: 0.1 } });
+    this.chanPane = sub(chanHost);
+    this.macdHist = this.chanPane.addHistogramSeries({ priceLineVisible: false, lastValueVisible: false });
+    this.difLine = this.chanPane.addLineSeries({ lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+    this.deaLine = this.chanPane.addLineSeries({ lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+    this.subs = [this.ofPane, this.chanPane];
+
     this.chart.timeScale().subscribeVisibleLogicalRangeChange((r) => {
-      if (r) this.sub.timeScale().setVisibleLogicalRange(r);
-      this.requestProfileDraw();
+      if (r) this.subs.forEach((s) => s.timeScale().setVisibleLogicalRange(r));
+      this.requestOverlay();
     });
     this.chart.subscribeCrosshairMove((p) => this.onHover(p));
-    new ResizeObserver(() => this.requestProfileDraw()).observe($(".chart", this.el));
+    new ResizeObserver(() => this.requestOverlay()).observe($(".chart", this.el));
   }
 
   renderChips() {
@@ -339,24 +242,26 @@ class Panel {
       localization: { locale: LOCALE() },
     };
     this.chart.applyOptions(base);
-    this.sub.applyOptions({ ...base, timeScale: { visible: false } });
+    this.subs.forEach((s) => s.applyOptions({ ...base, timeScale: { visible: false } }));
     this.candles.applyOptions({ upColor: p.up, downColor: p.down, wickUpColor: p.up, wickDownColor: p.down });
     this.vwapLine.applyOptions({ color: p.vwap });
     this.bands.forEach((s, i) => s.applyOptions({ color: alpha(p.vwap, i < 2 ? 0.55 : 0.35) }));
+    this.strokeLine.applyOptions({ color: p.stroke });
+    this.segmentLine.applyOptions({ color: alpha(p.segment, 0.8) });
+    this.emaLine.applyOptions({ color: p.ema });
     this.cvdSeries.applyOptions({ color: p.accent });
-    $(".dl-cvd", this.el).style.color = p.accent;
+    this.difLine.applyOptions({ color: p.accent });
+    this.deaLine.applyOptions({ color: p.vwap });
     if (this.bars) this.setBars(this.bars, true);
     this.renderQuote();
-    this.applyOrderFlowVisibility();
+    this.applyVisibility();
   }
 
-  applyOrderFlowVisibility() {
-    const on = state.of;
-    [this.vwapLine, ...this.bands].forEach((s) => s.applyOptions({ visible: on }));
-    $(".delta-wrap", this.el).hidden = !on;
-    $(".of-card", this.el).hidden = !on;
-    $(".profile-canvas", this.el).hidden = !on;
-    this.renderAnalysis();
+  applyVisibility() {
+    [this.vwapLine, ...this.bands].forEach((s) => s.applyOptions({ visible: on("of") }));
+    [this.strokeLine, this.segmentLine].forEach((s) => s.applyOptions({ visible: on("chan") }));
+    this.emaLine.applyOptions({ visible: on("pa") });
+    this.el.querySelectorAll(".sub-wrap").forEach((w) => { w.hidden = !on(w.dataset.pane); });
   }
 
   stop() {
@@ -374,7 +279,7 @@ class Panel {
     const s = this.sym;
     this.quote = null;
     this.bars = null;
-    this.analysis = null;
+    this.res = null;
     this.status("connecting");
     $(".q-name", this.el).textContent = labelOf(s);
     try {
@@ -460,7 +365,7 @@ class Panel {
     const prec = precisionFor(bars.at(-1)?.close ?? 1);
     this.prec = prec;
     const fmt = { priceFormat: { type: "price", precision: prec, minMove: 10 ** -prec } };
-    [this.candles, this.vwapLine, ...this.bands].forEach((s) => s.applyOptions(fmt));
+    [this.candles, this.vwapLine, ...this.bands, this.strokeLine, this.segmentLine, this.emaLine].forEach((s) => s.applyOptions(fmt));
     const range = keepView ? this.chart.timeScale().getVisibleLogicalRange() : null;
     this.candles.setData(bars.map((b) => ({ time: chartTime(b.time, iv), open: b.open, high: b.high, low: b.low, close: b.close })));
     this.volume.setData(bars.map((b) => ({ time: chartTime(b.time, iv), value: b.volume, color: alpha(b.close >= b.open ? p.up : p.down, 0.33) })));
@@ -479,83 +384,114 @@ class Panel {
     this.candles.update({ time: chartTime(b.time, iv), open: b.open, high: b.high, low: b.low, close: b.close });
     this.volume.update({ time: chartTime(b.time, iv), value: b.volume, color: alpha(b.close >= b.open ? p.up : p.down, 0.33) });
     if (this.quote) { this.quote.price = b.close; this.renderQuote(); }
-    // Full re-analysis on bar close; throttled while the live bar is forming.
     if (closed) this.runAnalysis();
     else if (!this.analysisTimer) this.analysisTimer = setTimeout(() => { this.analysisTimer = null; this.runAnalysis(); }, ANALYSIS_THROTTLE_MS);
   }
 
-  // ----- order flow -----
+  // ----- analysis -----
   runAnalysis() {
     if (!this.bars?.length || !this.feed) { this.drawMarkers(); return; }
     const iv = state.interval;
-    const profileBars = PROFILE_BARS[iv];
-    let sessionOf = this.feed.sessionOf;
-    if (iv === "1d") { // daily: anchor VWAP at the start of the profile window
-      const anchor = this.bars[Math.max(0, this.bars.length - profileBars)].time;
-      sessionOf = (b) => (b.time >= anchor ? 1 : 0);
+    const bars = this.bars;
+    const res = { combined: null };
+    if (on("of")) {
+      const profileBars = PROFILE_BARS[iv];
+      let sessionOf = this.feed.sessionOf;
+      if (iv === "1d") { // daily: anchor VWAP at the start of the profile window
+        const anchor = bars[Math.max(0, bars.length - profileBars)].time;
+        sessionOf = (b) => (b.time >= anchor ? 1 : 0);
+      }
+      res.of = OrderFlow.analyze(bars, { sessionOf, profileBars, delayed: this.feed.delayed > 0 });
+      res.sessionOf = sessionOf;
+      res.ofByTime = new Map(res.of.bars.map((b) => [timeKey(chartTime(b.time, iv)), b]));
     }
-    this.sessionOf = sessionOf;
-    this.analysis = OrderFlow.analyze(this.bars, { sessionOf, profileBars, delayed: this.feed.delayed > 0 });
-    this.byTime = new Map(this.analysis.bars.map((b) => [timeKey(chartTime(b.time, iv)), b]));
-    this.drawOrderFlow();
+    if (on("chan")) res.chan = Chan.analyze(bars);
+    if (on("pa")) res.pa = PriceAction.analyze(bars);
+    const reads = [res.of?.read, res.chan?.read, res.pa?.read].filter(Boolean);
+    if (state.theories.size) {
+      res.combined = Combine.combine(reads, {
+        price: bars.at(-1).close,
+        atr: PriceAction.atr(bars),
+        delayed: this.feed.delayed,
+        estimatedDelta: !!res.of?.estimated,
+      });
+    }
+    this.res = res;
+    this.drawSeries();
+    this.drawPriceLines();
     this.drawMarkers();
     this.renderAnalysis();
+    this.requestOverlay();
   }
 
-  drawOrderFlow() {
-    const a = this.analysis;
-    if (!a) return;
-    const iv = state.interval;
-    const p = palette();
-    const sess = this.sessionOf;
-    // VWAP and bands; whitespace at session ends so lines don't join across resets.
-    const series = [[this.vwapLine, 0], [this.bands[0], 1], [this.bands[1], -1], [this.bands[2], 2], [this.bands[3], -2]];
-    for (const [s, k] of series) {
-      s.setData(a.bars.map((b, i) => {
-        const time = chartTime(b.time, iv);
-        const v = a.vw[i];
-        const sessionEnd = i < a.bars.length - 1 && sess(a.bars[i + 1]) !== sess(b);
-        if (!v.vwap || sessionEnd) return { time };
-        return { time, value: v.vwap + k * v.sd };
-      }));
-    }
-    this.deltaSeries.setData(a.bars.map((b) => ({ time: chartTime(b.time, iv), value: b.delta, color: alpha(b.delta >= 0 ? p.up : p.down, 0.75) })));
-    this.cvdSeries.setData(a.bars.map((b) => ({ time: chartTime(b.time, iv), value: b.cvd })));
-    const r = this.chart.timeScale().getVisibleLogicalRange();
-    if (r) this.sub.timeScale().setVisibleLogicalRange(r);
-    this.renderDeltaLegend(a.bars.at(-1));
+  drawSeries() {
+    const r = this.res, iv = state.interval, p = palette();
+    const T = (i) => chartTime(this.bars[i].time, iv);
+    // Order flow: VWAP ± bands (whitespace at session ends so lines don't join across resets), delta/CVD.
+    if (r.of) {
+      const a = r.of, sess = r.sessionOf;
+      [[this.vwapLine, 0], [this.bands[0], 1], [this.bands[1], -1], [this.bands[2], 2], [this.bands[3], -2]].forEach(([s, k]) => {
+        s.setData(a.bars.map((b, i) => {
+          const v = a.vw[i];
+          const sessionEnd = i < a.bars.length - 1 && sess(a.bars[i + 1]) !== sess(b);
+          return !v.vwap || sessionEnd ? { time: T(i) } : { time: T(i), value: v.vwap + k * v.sd };
+        }));
+      });
+      this.deltaSeries.setData(a.bars.map((b, i) => ({ time: T(i), value: b.delta, color: alpha(b.delta >= 0 ? p.up : p.down, 0.75) })));
+      this.cvdSeries.setData(a.bars.map((b, i) => ({ time: T(i), value: b.cvd })));
+    } else [this.vwapLine, ...this.bands, this.deltaSeries, this.cvdSeries].forEach((s) => s.setData([]));
+    // Chan: stroke and segment zig-zags; MACD pane.
+    if (r.chan) {
+      const c = r.chan;
+      const zig = (pts) => {
+        const out = [];
+        for (const v of pts) { const time = T(v.idx); if (!out.length || timeKey(out.at(-1).time) !== timeKey(time)) out.push({ time, value: v.price }); }
+        return out;
+      };
+      this.strokeLine.setData(zig(c.vertices));
+      this.segmentLine.setData(zig(c.segments.length ? [c.segments[0].from, ...c.segments.map((s) => s.to)] : []));
+      this.macdHist.setData(c.macd.map((m, i) => ({ time: T(i), value: m.hist, color: alpha(m.hist >= 0 ? p.up : p.down, 0.7) })));
+      this.difLine.setData(c.macd.map((m, i) => ({ time: T(i), value: m.dif })));
+      this.deaLine.setData(c.macd.map((m, i) => ({ time: T(i), value: m.dea })));
+    } else [this.strokeLine, this.segmentLine, this.macdHist, this.difLine, this.deaLine].forEach((s) => s.setData([]));
+    // Price action: 20 EMA.
+    this.emaLine.setData(r.pa ? r.pa.ema20.map((v, i) => ({ time: T(i), value: v })) : []);
+    const range = this.chart.timeScale().getVisibleLogicalRange();
+    if (range) this.subs.forEach((s) => s.timeScale().setVisibleLogicalRange(range));
+    this.renderSubLegends();
+  }
 
-    // Profile + plan levels as price lines.
+  drawPriceLines() {
     this.priceLines.forEach((l) => this.candles.removePriceLine(l));
     this.priceLines = [];
-    if (!state.of) { this.requestProfileDraw(); return; }
+    const r = this.res, p = palette(), L = I18N[state.lang];
     const pl = (price, color, title, style = 0, width = 1) => {
       if (price == null || !Number.isFinite(price)) return;
       this.priceLines.push(this.candles.createPriceLine({ price, color, lineWidth: width, lineStyle: style, axisLabelVisible: true, title }));
     };
-    if (a.profile) {
-      pl(a.profile.poc, p.poc, "POC", 0, 2);
-      pl(a.profile.vah, alpha(p.va, 0.8), "VAH", 2);
-      pl(a.profile.val, alpha(p.va, 0.8), "VAL", 2);
+    if (r.of?.profile) {
+      pl(r.of.profile.poc, p.poc, "POC", 0, 2);
+      pl(r.of.profile.vah, alpha(p.poc, 0.8), "VAH", 2);
+      pl(r.of.profile.val, alpha(p.poc, 0.8), "VAL", 2);
     }
-    const s = a.suggestion;
-    if (s && s.bias !== "wait") {
-      const L = I18N[state.lang];
-      pl(s.entry, p.accent, L.entry, 1, 2);
-      pl(s.stop, "#ef4444", L.stop, 1, 2);
-      s.targets.forEach((x, i) => pl(x, "#10b981", i ? L.t2 : L.t1, 1, 2));
+    const pv = r.chan?.pivots.at(-1);
+    if (pv) { pl(pv.zg, alpha(p.pivot, 0.9), "ZG", 2); pl(pv.zd, alpha(p.pivot, 0.9), "ZD", 2); }
+    const c = r.combined;
+    if (c && c.bias !== "wait") {
+      pl(c.entry, p.accent, L.entry, 1, 2);
+      pl(c.stop, "#ef4444", L.stop, 1, 2);
+      c.targets.forEach((x, i) => pl(x, "#10b981", i ? L.t2 : L.t1, 1, 2));
     }
-    this.requestProfileDraw();
   }
 
-  requestProfileDraw() {
-    if (this.profileRaf) return;
-    this.profileRaf = requestAnimationFrame(() => { this.profileRaf = null; this.drawProfile(); });
+  requestOverlay() {
+    if (this.overlayRaf) return;
+    this.overlayRaf = requestAnimationFrame(() => { this.overlayRaf = null; this.drawOverlay(); });
   }
 
-  // Volume-at-price histogram on the right of the plot, split into sell (left) and buy (right) volume.
-  drawProfile() {
-    const canvas = $(".profile-canvas", this.el);
+  // Canvas overlay: volume profile (OF), pivot boxes (Chan), S/R zones and BOS/CHoCH lines (PA).
+  drawOverlay() {
+    const canvas = $(".overlay-canvas", this.el);
     const host = $(".chart", this.el);
     const w = host.clientWidth, h = host.clientHeight, dpr = window.devicePixelRatio || 1;
     if (canvas.width !== w * dpr || canvas.height !== h * dpr) {
@@ -565,66 +501,111 @@ class Panel {
     const ctx = canvas.getContext("2d");
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
-    const prof = this.analysis?.profile;
-    if (!state.of || !prof) return;
+    const r = this.res;
+    if (!r) return;
     const p = palette();
-    const paneW = this.chart.timeScale().width();
-    const maxLen = paneW * 0.2;
-    const maxTotal = Math.max(...prof.levels.map((L) => L.total));
-    for (const L of prof.levels) {
-      if (!L.total) continue;
-      const y1 = this.candles.priceToCoordinate(L.hi), y2 = this.candles.priceToCoordinate(L.lo);
-      if (y1 == null || y2 == null) continue;
-      const top = Math.min(y1, y2), height = Math.max(1, Math.abs(y2 - y1) - 1);
-      const len = (L.total / maxTotal) * maxLen;
-      const inVA = L.lo >= prof.val - 1e-9 && L.hi <= prof.vah + 1e-9;
-      const isPoc = prof.poc >= L.lo && prof.poc <= L.hi;
-      const a = isPoc ? 0.75 : inVA ? 0.4 : 0.18;
-      const sellLen = len * (L.sell / L.total);
-      const x0 = paneW - len;
-      ctx.fillStyle = alpha(p.down, a);
-      ctx.fillRect(x0, top, sellLen, height);
-      ctx.fillStyle = alpha(p.up, a);
-      ctx.fillRect(x0 + sellLen, top, len - sellLen, height);
-      if (isPoc) { ctx.strokeStyle = p.poc; ctx.lineWidth = 1; ctx.strokeRect(x0 + 0.5, top + 0.5, len - 1, height - 1); }
+    const ts = this.chart.timeScale();
+    const paneW = ts.width();
+    const X = (i) => ts.logicalToCoordinate(i);
+    const Y = (price) => this.candles.priceToCoordinate(price);
+    ctx.save();
+    ctx.beginPath(); ctx.rect(0, 0, paneW, h); ctx.clip();
+    ctx.font = "11px Inter, 'Noto Sans SC', sans-serif";
+
+    if (r.pa) {
+      for (const z of r.pa.zones) {
+        const y1 = Y(z.hi), y2 = Y(z.lo);
+        if (y1 == null || y2 == null) continue;
+        ctx.fillStyle = alpha(p.zone, 0.1);
+        ctx.fillRect(0, Math.min(y1, y2), paneW, Math.abs(y2 - y1));
+        ctx.fillStyle = alpha(p.zone, 0.9);
+        ctx.fillText(`S/R ×${z.touches}`, 6, Math.min(y1, y2) + 11);
+      }
+      const recent = r.pa.events.slice(-3);
+      for (const e of recent) {
+        const x1 = X(e.from), x2 = X(e.idx), y = Y(e.level);
+        if (x1 == null || x2 == null || y == null) continue;
+        const col = e.dir === 1 ? p.up : p.down;
+        ctx.strokeStyle = col; ctx.setLineDash([4, 3]); ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(x1, y); ctx.lineTo(x2, y); ctx.stroke(); ctx.setLineDash([]);
+        ctx.fillStyle = col;
+        ctx.fillText(e.type, (x1 + x2) / 2 - 12, y + (e.dir === 1 ? -4 : 12));
+      }
+    }
+    if (r.chan) {
+      for (const pv of r.chan.pivots) {
+        const x1 = X(pv.startIdx), x2 = X(pv.endIdx), y1 = Y(pv.zg), y2 = Y(pv.zd);
+        if ([x1, x2, y1, y2].some((v) => v == null)) continue;
+        ctx.fillStyle = alpha(p.pivot, 0.12);
+        ctx.fillRect(x1, y1, x2 - x1, y2 - y1);
+        ctx.strokeStyle = alpha(p.pivot, 0.7); ctx.lineWidth = 1;
+        ctx.strokeRect(x1 + 0.5, y1 + 0.5, x2 - x1, y2 - y1);
+      }
+    }
+    ctx.restore();
+
+    const prof = r.of?.profile;
+    if (prof) {
+      const maxLen = paneW * 0.2;
+      const maxTotal = Math.max(...prof.levels.map((L) => L.total));
+      for (const L of prof.levels) {
+        if (!L.total) continue;
+        const y1 = Y(L.hi), y2 = Y(L.lo);
+        if (y1 == null || y2 == null) continue;
+        const top = Math.min(y1, y2), height = Math.max(1, Math.abs(y2 - y1) - 1);
+        const len = (L.total / maxTotal) * maxLen;
+        const inVA = L.lo >= prof.val - 1e-9 && L.hi <= prof.vah + 1e-9;
+        const isPoc = prof.poc >= L.lo && prof.poc <= L.hi;
+        const a = isPoc ? 0.75 : inVA ? 0.4 : 0.18;
+        const sellLen = len * (L.sell / L.total);
+        const x0 = paneW - len;
+        ctx.fillStyle = alpha(p.down, a); ctx.fillRect(x0, top, sellLen, height);
+        ctx.fillStyle = alpha(p.up, a); ctx.fillRect(x0 + sellLen, top, len - sellLen, height);
+        if (isPoc) { ctx.strokeStyle = p.poc; ctx.lineWidth = 1; ctx.strokeRect(x0 + 0.5, top + 0.5, len - 1, height - 1); }
+      }
     }
   }
 
-  // Calendar events (high sensitivity for this market) + order-flow signals.
+  // Calendar events + each active theory's signals as chart markers.
   drawMarkers() {
     if (!this.bars?.length) return;
-    const iv = state.interval;
-    const p = palette();
-    const first = this.bars[0].time;
-    const end = this.bars.at(-1).time + INTERVAL_SEC[iv];
-    const now = Date.now() / 1000;
+    const iv = state.interval, p = palette(), L = I18N[state.lang], r = this.res || {};
+    const n = this.bars.length;
+    const first = this.bars[0].time, end = this.bars.at(-1).time + INTERVAL_SEC[iv], now = Date.now() / 1000;
     this.eventAt = new Map();
     const markers = [];
+    const mk = (idx, m) => markers.push({ raw: this.bars[idx].time, time: chartTime(this.bars[idx].time, iv), ...m });
     for (const e of state.events) {
       const m = e.impact.markets.find((x) => x.key === this.g.market);
       if (!m || m.level !== "high") continue;
       const ts = etToEpoch(e.date, e.time_et);
       if (ts < first || ts >= end || ts > now) continue;
-      let lo = 0, hi = this.bars.length - 1;
+      let lo = 0, hi = n - 1;
       while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (this.bars[mid].time <= ts) lo = mid; else hi = mid - 1; }
-      const raw = this.bars[lo].time;
-      const time = chartTime(raw, iv);
-      const key = timeKey(time);
+      const key = timeKey(chartTime(this.bars[lo].time, iv));
       if (this.eventAt.has(key)) { this.eventAt.get(key).push(e); continue; }
       this.eventAt.set(key, [e]);
-      markers.push({ raw, time, position: "aboveBar", color: p.accent, shape: "arrowDown", text: SHORT[state.lang][e.type] || e.title });
+      mk(lo, { position: "aboveBar", color: p.accent, shape: "arrowDown", text: SHORT[state.lang][e.type] || e.title });
     }
-    if (state.of && this.analysis) {
-      for (const s of this.analysis.signals) {
-        markers.push({
-          raw: s.time,
-          time: chartTime(s.time, iv),
-          position: s.side === "buy" ? "belowBar" : "aboveBar",
-          color: s.side === "buy" ? p.up : p.down,
-          shape: s.type === "absorption" ? "circle" : s.side === "buy" ? "arrowUp" : "arrowDown",
-          text: t("sig")[s.type],
-          size: s.type === "absorption" ? 0.6 : 1,
-        });
+    if (r.of) {
+      for (const s of r.of.signals) {
+        mk(s.i, { position: s.side === "buy" ? "belowBar" : "aboveBar", color: s.side === "buy" ? p.up : p.down,
+                  shape: s.type === "absorption" ? "circle" : s.side === "buy" ? "arrowUp" : "arrowDown",
+                  text: L.sig[s.type], size: s.type === "absorption" ? 0.6 : 1 });
+      }
+    }
+    if (r.chan) {
+      for (const pt of r.chan.points) {
+        const buy = pt.type.endsWith("B");
+        mk(pt.idx, { position: buy ? "belowBar" : "aboveBar", color: buy ? p.up : p.down, shape: buy ? "arrowUp" : "arrowDown", text: L.chanPt[pt.type], size: 1.4 });
+      }
+    }
+    if (r.pa) {
+      for (const s of r.pa.swings.filter((x) => x.label).slice(-PA_LABEL_SWINGS)) {
+        mk(s.idx, { position: s.type === "high" ? "aboveBar" : "belowBar", color: alpha(p.ink, 0.6), shape: "circle", size: 0.1, text: s.label });
+      }
+      for (const pt of r.pa.patterns.filter((x) => x.idx >= n - PA_PATTERN_BARS && x.dir !== 0 && x.zone)) {
+        mk(pt.idx, { position: pt.dir > 0 ? "belowBar" : "aboveBar", color: pt.dir > 0 ? p.up : p.down, shape: "square", size: 0.5, text: L.pat[pt.name] });
       }
     }
     markers.sort((a, b) => a.raw - b.raw);
@@ -633,54 +614,57 @@ class Panel {
 
   renderAnalysis() {
     const card = $(".of-card", this.el);
-    const a = this.analysis;
-    if (!state.of || !a) { card.innerHTML = ""; return; }
     const L = I18N[state.lang];
+    if (!state.theories.size) { card.innerHTML = `<p class="of-empty">${esc(L.pickTheory)}</p>`; return; }
+    const r = this.res, c = r?.combined;
+    if (!c) { card.innerHTML = r?.of && !r.of.hasVolume && state.theories.size === 1 ? `<p class="of-empty">${esc(L.noVolume)}</p>` : ""; return; }
     const prec = this.prec ?? 2;
     const f = (x) => fmtNum(x, prec);
-    if (!a.hasVolume || !a.suggestion) {
-      card.innerHTML = `<p class="of-empty">${esc(L.noVolume)}</p>`;
-      return;
-    }
-    const s = a.suggestion;
-    const v = a.vw.at(-1);
-    const fmtArgs = (args) => Object.fromEntries(Object.entries(args).map(([k, x]) => [k, k === "pct" ? fmtPct(x) : k === "z" ? Math.abs(x).toFixed(1) : f(x)]));
-    const notes = [a.estimated ? L.deltaEst : L.deltaReal];
+    const fmtArgs = (args = {}) => Object.fromEntries(Object.entries(args).map(([k, x]) =>
+      [k, typeof x !== "number" ? x : k === "pct" ? fmtPct(x) : k === "z" ? Math.abs(x).toFixed(1) : f(x)]));
+    const notes = [];
+    if (r.of) notes.push(r.of.hasVolume ? (r.of.estimated ? L.deltaEst : L.deltaReal) : L.noVolume);
     if (this.feed?.delayed) notes.push(L.delayedNote(this.feed.delayed));
-    const atMarket = Math.abs(s.entry - s.price) < 1e-12;
-    const plan = s.bias === "wait"
-      ? `<div class="plan-row"><span>${esc(L.longAbove)}</span><b>${f(s.triggers.longAbove)}</b></div>
-         <div class="plan-row"><span>${esc(L.shortBelow)}</span><b>${f(s.triggers.shortBelow)}</b></div>
-         <div class="plan-row"><span>${esc(L.magnet)}</span><b>${f(s.triggers.poc)}</b></div>`
-      : `<div class="plan-row"><span>${esc(L.entry)} <small>${esc((s.bias === "buy" ? L.entryNote : L.entrySell)[atMarket ? "mkt" : "pull"])}</small></span><b>${f(s.entry)}</b></div>
-         <div class="plan-row stop"><span>${esc(L.stop)}</span><b>${f(s.stop)}</b></div>
-         ${s.targets.map((x, i) => `<div class="plan-row tgt"><span>${esc(i ? L.t2 : L.t1)}</span><b>${f(x)}</b></div>`).join("")}
-         <div class="plan-row"><span>${esc(L.rr)}</span><b>${s.rr ? s.rr.toFixed(1) : "–"}</b></div>`;
+    if (r.of) notes.push(L.profileOf(PROFILE_SPAN[state.lang][state.interval]));
+
+    const plan = c.bias === "wait"
+      ? `<div class="plan-row"><span>${esc(L.longAbove)}</span><b>${c.triggers.longAbove != null ? f(c.triggers.longAbove) : "–"}</b></div>
+         <div class="plan-row"><span>${esc(L.shortBelow)}</span><b>${c.triggers.shortBelow != null ? f(c.triggers.shortBelow) : "–"}</b></div>`
+      : `<div class="plan-row"><span>${esc(L.entry)} <small>${esc(c.atLevel ? L.entryNote[c.bias] : L.entryNote.mkt)}</small></span><b>${f(c.entry)}</b></div>
+         <div class="plan-row stop"><span>${esc(L.stop)} ${c.stopFrom ? `<small>${esc(L.stopFrom(L.theoryShort[c.stopFrom]))}</small>` : ""}</span><b>${f(c.stop)}</b></div>
+         ${c.targets.map((x, i) => `<div class="plan-row tgt"><span>${esc(i ? L.t2 : L.t1)}</span><b>${f(x)}</b></div>`).join("")}
+         <div class="plan-row"><span>${esc(L.rr)}</span><b>${c.rr ? c.rr.toFixed(1) : "–"}</b></div>`;
+    const agreeing = c.per.filter((x) => x.lean === c.bias).length;
+    const groups = c.per.map((pt) => {
+      const rs = c.reasons.filter((x) => x.theory === pt.theory);
+      return `<div class="th-group">
+        <div class="th-head"><span class="th-name">${esc(L.theory[pt.theory])}</span><span class="th-lean ${pt.lean}">${esc(L.bias[pt.lean])}</span><span class="th-norm">${pt.norm > 0 ? "+" : ""}${pt.norm.toFixed(2)}</span></div>
+        <ul class="of-reasons">${rs.map((x) => `<li class="${x.sign > 0 ? "pos" : x.sign < 0 ? "neg" : "neu"}">${esc(L.R[x.key] ? L.R[x.key](fmtArgs(x.args)) : x.key)}</li>`).join("")}</ul>
+      </div>`;
+    }).join("");
     card.innerHTML = `
-      <div class="of-head"><h4>${esc(L.ofTitle(state.interval === "1d" ? "1D" : state.interval))}</h4><span class="of-sub">${esc(L.profileOf(PROFILE_SPAN[state.lang][state.interval]))}</span></div>
+      <div class="of-head"><h4>${esc(L.readTitle(state.interval === "1d" ? "1D" : state.interval))}</h4>
+        <span class="th-chips">${THEORIES.filter(on).map((th) => `<span class="th-chip ${th}">${esc(L.theory[th])}</span>`).join("")}</span></div>
       <div class="of-grid">
-        <div class="of-bias ${s.bias}">
-          <div class="bias-pill">${esc(L.bias[s.bias])}</div>
-          <div class="bias-sub">${esc(L.biasSub[s.bias])}</div>
-          <div class="conf"><span>${esc(L.confidence)}</span><div class="conf-bar"><i style="width:${s.confidence}%"></i></div><b>${s.confidence}%</b></div>
-          <div class="of-score">${esc(L.score)} ${s.score > 0 ? "+" : ""}${s.score}</div>
+        <div class="of-bias ${c.bias}">
+          <div class="bias-pill">${esc(L.bias[c.bias])}</div>
+          <div class="bias-sub">${esc(c.conflict ? L.conflict : L.biasSub[c.bias])}</div>
+          <div class="conf"><span>${esc(L.confidence)}</span><div class="conf-bar"><i style="width:${c.confidence}%"></i></div><b>${c.confidence}%</b></div>
+          <div class="of-score">${esc(L.score)} ${c.mean > 0 ? "+" : ""}${c.mean.toFixed(2)}${c.bias !== "wait" && c.per.length > 1 ? ` · ${esc(L.agreeN(agreeing, c.per.length))}` : ""}</div>
         </div>
-        <div class="of-plan">${plan}
-          <div class="of-levels"><span class="lvl poc">POC ${f(a.profile.poc)}</span><span class="lvl va">VAH ${f(a.profile.vah)}</span><span class="lvl va">VAL ${f(a.profile.val)}</span>${v?.vwap ? `<span class="lvl vw">VWAP ${f(v.vwap)}</span>` : ""}</div>
-        </div>
-        <ul class="of-reasons">${s.reasons.map((r) => `<li class="${r.sign > 0 ? "pos" : r.sign < 0 ? "neg" : "neu"}">${esc(L.R[r.key](fmtArgs(r.args)))}</li>`).join("")}</ul>
+        <div class="of-plan">${plan}</div>
+        <div class="th-groups">${groups}</div>
       </div>
-      <p class="of-note">${notes.map(esc).join(" · ")}</p>`;
+      ${notes.length ? `<p class="of-note">${notes.map(esc).join(" · ")}</p>` : ""}`;
   }
 
   onHover(p) {
     const box = $(".ohlc", this.el);
     const d = p?.time !== undefined && p.seriesData.get(this.candles);
-    try {
-      if (p?.time !== undefined) this.sub.setCrosshairPosition(0, p.time, this.deltaSeries);
-      else this.sub.clearCrosshairPosition();
-    } catch { /* not supported by this library version */ }
-    if (!d) { box.innerHTML = ""; this.renderDeltaLegend(this.analysis?.bars.at(-1)); return; }
+    for (const [pane, series] of [[this.ofPane, this.deltaSeries], [this.chanPane, this.macdHist]]) {
+      try { if (p?.time !== undefined) pane.setCrosshairPosition(0, p.time, series); else pane.clearCrosshairPosition(); } catch { /* unsupported */ }
+    }
+    if (!d) { box.innerHTML = ""; this.renderSubLegends(); return; }
     const prec = precisionFor(d.close);
     const v = p.seriesData.get(this.volume)?.value;
     const key = timeKey(p.time);
@@ -691,15 +675,19 @@ class Panel {
       `<span>${t("l")} <b style="color:${col}">${fmtNum(d.low, prec)}</b></span><span>${t("c")} <b style="color:${col}">${fmtNum(d.close, prec)}</b></span>` +
       (v ? `<span>${t("v")} <b>${fmtVol(v)}</b></span>` : "") +
       evs.map((e) => `<a class="ohlc-ev" href="/?event=${encodeURIComponent(e.id)}&lang=${state.lang}">◆ ${esc(e.title)}</a>`).join("");
-    this.renderDeltaLegend(this.byTime?.get(key));
+    this.renderSubLegends(key, p.logical);
   }
 
-  renderDeltaLegend(b) {
-    const pal = palette();
-    const dl = $(".dl-delta", this.el), cl = $(".dl-cvd", this.el);
-    if (!b) { dl.textContent = t("delta"); cl.textContent = t("cvd"); return; }
-    dl.innerHTML = `${t("delta")} <b style="color:${b.delta >= 0 ? pal.up : pal.down}">${fmtVol(b.delta)}</b>`;
-    cl.innerHTML = `${t("cvd")} <b>${fmtVol(b.cvd)}</b>`;
+  renderSubLegends(key, logical) {
+    const pal = palette(), r = this.res;
+    const [ofW, chanW] = this.el.querySelectorAll(".sub-wrap");
+    const ofBar = r?.of && (key ? r.ofByTime.get(key) : r.of.bars.at(-1));
+    $(".dl-a", ofW).innerHTML = ofBar ? `${t("delta")} <b style="color:${ofBar.delta >= 0 ? pal.up : pal.down}">${fmtVol(ofBar.delta)}</b>` : t("delta");
+    $(".dl-b", ofW).innerHTML = ofBar ? `${t("cvd")} <b style="color:${pal.accent}">${fmtVol(ofBar.cvd)}</b>` : t("cvd");
+    const m = r?.chan && r.chan.macd[logical != null && logical >= 0 ? Math.min(logical, r.chan.macd.length - 1) : r.chan.macd.length - 1];
+    const dp = this.prec ?? 2;
+    $(".dl-a", chanW).innerHTML = m ? `${t("macd")} <b style="color:${m.hist >= 0 ? pal.up : pal.down}">${fmtNum(m.hist, dp)}</b>` : t("macd");
+    $(".dl-b", chanW).innerHTML = m ? `DIF <b style="color:${pal.accent}">${fmtNum(m.dif, dp)}</b> DEA <b style="color:${pal.vwap}">${fmtNum(m.dea, dp)}</b>` : "";
   }
 
   renderQuote() {
@@ -744,7 +732,7 @@ class Panel {
   destroy() {
     this.stop();
     this.chart.remove();
-    this.sub.remove();
+    this.subs.forEach((s) => s.remove());
   }
 }
 
@@ -752,7 +740,6 @@ class Panel {
 let panels = [];
 
 async function loadEvents() {
-  // From the start of the longest chart history (1D ≈ 2 years) to 30 days ahead.
   const days = state.interval === "1d" ? 760 : 100;
   const start = new Date(Date.now() - days * 864e5).toISOString().slice(0, 10);
   const end = new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10);
@@ -767,11 +754,14 @@ function applyStaticText() {
   document.documentElement.lang = state.lang === "zh" ? "zh-CN" : "en";
   document.title = t("title");
   document.querySelectorAll("[data-i18n]").forEach((el) => { el.textContent = t(el.dataset.i18n); });
+  document.querySelectorAll("[data-theory]").forEach((b) => {
+    $("span", b).textContent = t("theory")[b.dataset.theory];
+    b.classList.toggle("on", on(b.dataset.theory));
+    b.setAttribute("aria-pressed", String(on(b.dataset.theory)));
+  });
   document.querySelectorAll(".lang-toggle .seg").forEach((b) => b.classList.toggle("on", b.dataset.lang === state.lang));
   document.querySelectorAll("#intervals .seg").forEach((b) => b.classList.toggle("on", b.dataset.int === state.interval));
   document.querySelectorAll("#colorMode .seg").forEach((b) => b.classList.toggle("on", b.dataset.colors === colorMode()));
-  $("#ofToggle").classList.toggle("on", state.of);
-  $("#ofToggle").setAttribute("aria-pressed", String(state.of));
 }
 
 function build() {
@@ -808,16 +798,18 @@ document.querySelectorAll("#colorMode .seg").forEach((b) => {
     panels.forEach((p) => p.applyTheme());
   };
 });
-$("#ofToggle").onclick = () => {
-  state.of = !state.of;
-  save("mc.of", state.of);
-  applyStaticText();
-  panels.forEach((p) => { p.applyOrderFlowVisibility(); p.drawOrderFlow(); p.drawMarkers(); });
-};
+document.querySelectorAll("[data-theory]").forEach((b) => {
+  b.onclick = () => {
+    const th = b.dataset.theory;
+    if (on(th)) state.theories.delete(th); else state.theories.add(th);
+    save("mc.theories", [...state.theories]);
+    applyStaticText();
+    panels.forEach((p) => { p.applyVisibility(); p.runAnalysis(); });
+  };
+});
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => panels.forEach((p) => p.applyTheme()));
-// Refresh Yahoo panels promptly when the tab becomes visible again.
 document.addEventListener("visibilitychange", () => { if (!document.hidden) panels.filter((p) => p.timer).forEach((p) => p.start()); });
 
 applyStaticText();
-if (window.LightweightCharts && window.OrderFlow) build();
+if (window.LightweightCharts && window.OrderFlow && window.Chan && window.PriceAction && window.Combine) build();
 else $("#panels").innerHTML = `<div class="warn">Chart library failed to load.</div>`;

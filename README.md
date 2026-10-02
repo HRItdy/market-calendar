@@ -10,7 +10,7 @@ uvicorn app.main:app --reload --port 8000
 # open http://localhost:8000
 ```
 
-Tests: `pip install -r requirements-dev.txt && pytest`, and `node --test tests/js/orderflow.test.cjs` for the order-flow engine
+Tests: `pip install -r requirements-dev.txt && pytest`, and `node --test tests/js/*.cjs` for the analysis engines
 
 ## Deploy publicly (Render)
 
@@ -27,13 +27,11 @@ The public copy runs with `MC_READ_ONLY=1`, so visitors can browse but not add o
 - **Cross-market impact**: for every event, how sensitive **Gold, Bitcoin, US stocks, Japan (Nikkei · JPY) and China (CSI 300 · Hang Seng · CNH)** are, and which way they usually move.
 - **English / 中文**: switch language in the header. Every event, impact profile and note is translated. The site follows the browser language by default; `?lang=zh` forces Chinese.
 - **Live K-lines** at `/markets`: candlestick charts for **Web3** (BTC, ETH, SOL, BNB, XRP, DOGE), **Gold** (COMEX futures, PAXG, silver) and **US stocks** (S&P 500, Nasdaq, Dow, SPY, QQQ, NVDA, AAPL, TSLA, or any ticker you type). Choose 1m / 5m / 15m / 1H / 1D. Past high-impact events for each market are drawn on the chart, and the next ones are listed below it. Candle colors can be green-up (US convention) or red-up (Chinese convention).
-- **Order-flow layer** on every chart (toggle "Order flow"):
-  - **Volume profile** over a recent window, split into buy/sell volume, with **POC** (most-traded price) and the **70% value area** (VAH/VAL)
-  - **Session VWAP** with ±1σ/±2σ bands
-  - **Delta & CVD pane**: aggressive buy − sell volume per bar and its running total
-  - **Signals**: *absorption* (heavy aggression that fails to move price) and *delta divergence* (new swing extreme that CVD doesn't confirm)
-  - **Read**: a rule-based **BUY / SELL / WAIT** call with confidence, entry, stop, two targets (at least 1R), R:R and the reasoning behind each factor
-  - Crypto delta is **real** (Binance taker-buy volume). Gold and US stocks have no aggressor data on the free feed, so their delta is **estimated** from candle shape and their confidence is reduced.
+- **Three analysis theories you can switch on independently** (buttons above the charts). The read combines whichever ones are on:
+  - **Order flow**: volume profile (POC, VAH/VAL), session VWAP ±1σ/±2σ, delta & CVD pane, absorption and delta-divergence signals. Crypto delta is **real** (Binance taker-buy volume); gold/US stocks delta is **estimated** from candle shape.
+  - **Chan Lun 缠论**: inclusion processing (包含), fractals (分型), strokes (笔), segments (线段, simplified feature-sequence rule), pivots (中枢 boxes with ZG/ZD), MACD pane, trend divergence (背驰), and first/second/third-type buy & sell points (一/二/三买卖点).
+  - **Price action**: swing structure (HH/HL/LH/LL), BOS and CHoCH, support/resistance zones from swing clusters, 20 EMA, and pin / engulfing / inside-bar signals at those zones.
+  - **Combined read**: each theory scores the market from −1 to +1 and leans BUY or SELL at ±0.4. If the selected theories lean opposite ways, the read is **WAIT** (conflict). Otherwise the average decides (±0.35). The plan uses the nearest supporting level for entry, the tightest structural stop from the agreeing theories, and targets from all theories' levels that pay at least 1R. Confidence is capped by how many theories agree (one 75%, two 85%, three 90%), and reduced for estimated delta or delayed data.
 - **Context notes**: flags data released during the Fed's pre-meeting blackout, days with several high-impact events, and releases that happen while the market is closed.
 - **Custom events**: add your own events (e.g. a stock you hold reporting earnings) and reuse a built-in impact template.
 - **Calendar export**: `/api/calendar.ics` works with Google, Apple and Outlook calendars.
@@ -58,7 +56,7 @@ The public copy runs with `MC_READ_ONLY=1`, so visitors can browse but not add o
 
 Check estimated dates against the official calendars (BLS, BEA, Census). To add a new year's FOMC schedule, add it to `app/data/fomc.json`; the UI warns when a year is missing.
 
-Typical-move figures are rough post-2020 historical tendencies. **They are not forecasts or investment advice.** The order-flow read is a transparent rule-based model for learning; it has not been backtested and is not a trading system.
+Typical-move figures are rough post-2020 historical tendencies. **They are not forecasts or investment advice.** The theory reads are transparent rule-based models for learning; they have not been backtested and are not a trading system. Chan Lun in particular has several schools of interpretation; this implementation documents its choices in `static/chan.js`.
 
 ## API
 
@@ -82,7 +80,10 @@ app/impact.py     Impact profiles (the knowledge base, edit to tune)
 app/impact_zh.py  Chinese text for the impact profiles
 app/markets.py    Per-event impact on Gold / BTC / US / Japan / China (EN + 中文)
 app/quotes.py     Yahoo Finance candle proxy with caching
-static/orderflow.js  Order-flow engine: delta/CVD, VWAP, volume profile, signals, buy/sell read
+static/orderflow.js  Order-flow engine: delta/CVD, VWAP, volume profile, signals
+static/chan.js       Chan Lun engine: 包含/分型/笔/线段/中枢/背驰/买卖点
+static/pa.js         Price-action engine: swings, BOS/CHoCH, S/R zones, EMA, signal bars
+static/combine.js    Merges the selected theories into one read and trade plan
 app/events.py     Event generation, cross-event annotations, risk score
 app/main.py       FastAPI routes
 static/           Frontend (vanilla JS, no build step)
