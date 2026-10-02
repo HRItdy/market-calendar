@@ -12,7 +12,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import events as E
-from .impact import PROFILES
+from .impact import PROFILES, profile
+
+Lang = Literal["en", "zh"]
 
 STATIC = Path(__file__).resolve().parent.parent / "static"
 MAX_RANGE_DAYS = 800
@@ -33,11 +35,14 @@ def _range(start: date | None, end: date | None) -> tuple[date, date]:
     return start, end
 
 
-def _warnings(start: date, end: date) -> list[str]:
+def _warnings(start: date, end: date, lang: str) -> list[str]:
     known = set(E.fomc_years())
     missing = [y for y in range(start.year, end.year + 1) if y not in known]
     if missing:
-        return [f"No official FOMC schedule loaded for {', '.join(map(str, missing))}. "
+        years = ", ".join(map(str, missing))
+        if lang == "zh":
+            return [f"尚未载入{years}年的官方FOMC会议日程。美联储公布后请添加到 app/data/fomc.json。"]
+        return [f"No official FOMC schedule loaded for {years}. "
                 "Add it to app/data/fomc.json once the Fed publishes it."]
     return []
 
@@ -48,9 +53,10 @@ def list_events(
     end: date | None = None,
     importance: list[Literal["high", "medium", "low"]] | None = Query(None),
     category: list[str] | None = Query(None),
+    lang: Lang = "en",
 ):
     start, end = _range(start, end)
-    evs = E.build(start, end)
+    evs = E.build(start, end, lang)
     if importance:
         evs = [e for e in evs if e["importance"] in importance]
     if category:
@@ -59,16 +65,16 @@ def list_events(
         "start": start, "end": end,
         "events": evs,
         "risk": E.daily_risk(evs),
-        "warnings": _warnings(start, end),
+        "warnings": _warnings(start, end, lang),
     }
 
 
 @app.get("/api/week")
-def week_ahead(start: date | None = None):
+def week_ahead(start: date | None = None, lang: Lang = "en"):
     """Next 7 days: the 'what matters this week' view."""
     start = start or date.today()
     end = start + timedelta(days=6)
-    evs = [e for e in E.build(start, end) if e["importance"] != "low" or e["type"] in ("holiday", "early_close")]
+    evs = [e for e in E.build(start, end, lang) if e["importance"] != "low" or e["type"] in ("holiday", "early_close")]
     return {"start": start, "end": end, "events": evs, "risk": E.daily_risk(evs)}
 
 
@@ -83,9 +89,8 @@ def _require_writable():
 
 
 @app.get("/api/event-types")
-def event_types():
-    from .impact import profile
-    return {k: profile(k) for k in PROFILES}
+def event_types(lang: Lang = "en"):
+    return {k: profile(k, lang) for k in PROFILES}
 
 
 class CustomEvent(BaseModel):
@@ -113,25 +118,36 @@ def remove_custom(event_id: str):
         raise HTTPException(404, "not found")
 
 
+ICS_LABELS = {
+    "en": {"why": "Why it matters", "move": "Typical move", "est": "ESTIMATED DATE: confirm with the official release calendar."},
+    "zh": {"why": "为何重要", "move": "典型波动", "est": "预估日期：请以官方发布日程为准。"},
+}
+
+
 def _ics_escape(s: str) -> str:
     return s.replace("\\", "\\\\").replace(";", r"\;").replace(",", r"\,").replace("\n", r"\n")
 
 
 @app.get("/api/calendar.ics", response_class=PlainTextResponse)
 def ics(start: date | None = None, end: date | None = None,
-        importance: list[Literal["high", "medium", "low"]] = Query(["high", "medium"])):
+        importance: list[Literal["high", "medium", "low"]] = Query(["high", "medium"]),
+        lang: Lang = "en"):
     """Subscribe from Google Calendar / Outlook / Apple Calendar."""
     start, end = _range(start, end or (start or date.today()) + timedelta(days=180))
     stamp = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
     lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//market-calendar//EN",
              "X-WR-CALNAME:US Market Events", "X-WR-TIMEZONE:America/New_York"]
-    for e in E.build(start, end):
+    L = ICS_LABELS[lang]
+    for e in E.build(start, end, lang):
         if e["importance"] not in importance:
             continue
         d = e["date"].replace("-", "")
-        desc = f"{e['impact']['summary']}\n\nWhy it matters: {e['impact']['why']}\n\nTypical move: {e['impact']['typical_move']}"
+        im = e["impact"]
+        desc = f"{im['summary']}\n\n{L['why']}: {im['why']}\n\n{L['move']}: {im['typical_move']}"
+        if im["markets"]:
+            desc += "\n\n" + "\n".join(f"• {m['name']}: {m['text']}" for m in im["markets"])
         if not e["confirmed"]:
-            desc = "ESTIMATED DATE: confirm with the official release calendar.\n\n" + desc
+            desc = L["est"] + "\n\n" + desc
         lines += ["BEGIN:VEVENT", f"UID:{e['id']}@market-calendar", f"DTSTAMP:{stamp}"]
         if e["time_et"]:
             lines.append(f"DTSTART;TZID=America/New_York:{d}T{e['time_et'].replace(':', '')}00")

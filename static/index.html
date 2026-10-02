@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Market Events Calendar</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
@@ -13,18 +13,22 @@
     <div class="brand">
       <span class="logo" aria-hidden="true">◆</span>
       <div>
-        <h1>Market Events Calendar</h1>
-        <p class="sub">Scheduled events that move US stocks, with each one's likely impact</p>
+        <h1 data-i18n="title"></h1>
+        <p class="sub" data-i18n="subtitle"></p>
       </div>
     </div>
     <div class="top-actions">
-      <a class="btn ghost" id="icsLink" href="/api/calendar.ics" title="Subscribe in Google/Apple/Outlook calendar">⤓ Export .ics</a>
-      <button class="btn" id="addBtn">+ Add event</button>
+      <div class="lang-toggle" role="group" aria-label="Language">
+        <button class="seg" data-lang="en">EN</button>
+        <button class="seg" data-lang="zh">中文</button>
+      </div>
+      <a class="btn ghost" id="icsLink" href="/api/calendar.ics" data-i18n="export" data-i18n-title="exportTip"></a>
+      <button class="btn" id="addBtn" data-i18n="add"></button>
     </div>
   </header>
 
   <section class="week" aria-labelledby="weekTitle">
-    <h2 id="weekTitle">Week ahead</h2>
+    <h2 id="weekTitle" data-i18n="weekAhead"></h2>
     <div id="weekStrip" class="week-strip"></div>
   </section>
 
@@ -33,16 +37,16 @@
       <button class="btn icon" id="prev" aria-label="Previous month">‹</button>
       <h2 id="monthLabel"></h2>
       <button class="btn icon" id="next" aria-label="Next month">›</button>
-      <button class="btn ghost" id="today">Today</button>
+      <button class="btn ghost" id="today" data-i18n="today"></button>
     </div>
     <div class="filters" id="filters" role="group" aria-label="Filter by importance">
-      <button class="chip on" data-imp="high"><i class="dot high"></i>High</button>
-      <button class="chip on" data-imp="medium"><i class="dot medium"></i>Medium</button>
-      <button class="chip" data-imp="low"><i class="dot low"></i>Low</button>
+      <button class="chip on" data-imp="high"><i class="dot high"></i><span data-i18n="high"></span></button>
+      <button class="chip on" data-imp="medium"><i class="dot medium"></i><span data-i18n="medium"></span></button>
+      <button class="chip" data-imp="low"><i class="dot low"></i><span data-i18n="low"></span></button>
     </div>
     <div class="view-toggle" role="tablist">
-      <button class="seg on" data-view="month" role="tab">Month</button>
-      <button class="seg" data-view="list" role="tab">List</button>
+      <button class="seg on" data-view="month" role="tab" data-i18n="month"></button>
+      <button class="seg" data-view="list" role="tab" data-i18n="list"></button>
     </div>
   </section>
 
@@ -54,11 +58,11 @@
   </main>
 
   <p class="legend">
-    <span><b>✓</b> confirmed date</span>
-    <span><b>~</b> estimated from the usual release pattern; check the agency calendar</span>
-    <span>All times US Eastern</span>
+    <span><b>✓</b> <span data-i18n="legendConfirmed"></span></span>
+    <span><b>~</b> <span data-i18n="legendEstimated"></span></span>
+    <span data-i18n="legendTz"></span>
   </p>
-  <p class="disclaimer">For education only, not investment advice. Typical moves are rough historical tendencies, not forecasts.</p>
+  <p class="disclaimer" data-i18n="disclaimer"></p>
 
   <aside id="drawer" class="drawer" aria-hidden="true">
     <div class="drawer-inner">
@@ -70,24 +74,29 @@
 
   <dialog id="addDialog">
     <form method="dialog" id="addForm">
-      <h3>Add a custom event</h3>
-      <label>Title <input name="title" required maxlength="120" placeholder="e.g. TSLA earnings" /></label>
+      <h3 data-i18n="addTitle"></h3>
+      <label><span data-i18n="fTitle"></span> <input name="title" required maxlength="120" data-i18n-ph="fTitlePh" /></label>
       <div class="row">
-        <label>Date <input name="date" type="date" required /></label>
-        <label>Time (ET) <input name="time_et" type="time" /></label>
+        <label><span data-i18n="fDate"></span> <input name="date" type="date" required /></label>
+        <label><span data-i18n="fTime"></span> <input name="time_et" type="time" /></label>
       </div>
       <div class="row">
-        <label>Importance
-          <select name="importance"><option value="">Use template</option><option>high</option><option>medium</option><option>low</option></select>
+        <label><span data-i18n="fImportance"></span>
+          <select name="importance">
+            <option value="" data-i18n="fUseTemplate"></option>
+            <option value="high" data-i18n="high"></option>
+            <option value="medium" data-i18n="medium"></option>
+            <option value="low" data-i18n="low"></option>
+          </select>
         </label>
-        <label>Impact template <select name="template" id="templateSelect"></select></label>
+        <label><span data-i18n="fTemplate"></span> <select name="template" id="templateSelect"></select></label>
       </div>
-      <label>Description <input name="description" maxlength="500" placeholder="Optional" /></label>
-      <label>Your impact notes <textarea name="impact_notes" rows="3" maxlength="1000" placeholder="Optional: why it matters to you"></textarea></label>
+      <label><span data-i18n="fDesc"></span> <input name="description" maxlength="500" data-i18n-ph="optional" /></label>
+      <label><span data-i18n="fNotes"></span> <textarea name="impact_notes" rows="3" maxlength="1000" data-i18n-ph="fNotesPh"></textarea></label>
       <p class="form-error" id="formError"></p>
       <div class="dialog-actions">
-        <button class="btn ghost" value="cancel" formnovalidate>Cancel</button>
-        <button class="btn" value="ok" id="saveBtn">Save</button>
+        <button class="btn ghost" value="cancel" formnovalidate data-i18n="cancel"></button>
+        <button class="btn" value="ok" id="saveBtn" data-i18n="save"></button>
       </div>
     </form>
   </dialog>

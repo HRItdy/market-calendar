@@ -114,3 +114,42 @@ def test_read_only_blocks_writes(monkeypatch):
     assert client.get("/api/config").json() == {"read_only": True}
     assert client.post("/api/custom-events", json={"date": "2026-10-21", "title": "x"}).status_code == 403
     assert client.delete("/api/custom-events/anything").status_code == 403
+
+
+# --- i18n and cross-market impact ---------------------------------------
+
+from app.impact import PROFILES, profile  # noqa: E402
+from app.markets import MARKET_KEYS  # noqa: E402
+
+
+@pytest.mark.parametrize("etype", list(PROFILES))
+def test_chinese_profile_matches_english_shape(etype):
+    en, zh = profile(etype, "en"), profile(etype, "zh")
+    for field in ("assets", "sectors", "scenarios", "watch"):
+        assert len(en[field]) == len(zh[field]), (etype, field)
+    for field in ("summary", "why", "typical_move"):
+        assert bool(en[field]) == bool(zh[field]), (etype, field)
+        assert en[field] != zh[field] or not en[field], (etype, field)
+    assert en["category"] != zh["category"]
+
+
+@pytest.mark.parametrize("etype", [k for k in PROFILES if k != "custom"])
+def test_every_event_type_covers_all_five_markets(etype):
+    for lang in ("en", "zh"):
+        ms = profile(etype, lang)["markets"]
+        assert [m["key"] for m in ms] == list(MARKET_KEYS)
+        assert all(m["level"] in ("high", "medium", "low") and m["text"] for m in ms)
+
+
+def test_api_chinese():
+    body = client.get("/api/events", params={"start": "2026-11-01", "end": "2026-11-30", "lang": "zh"}).json()
+    titles = {e["type"]: e["title"] for e in body["events"]}
+    assert titles["election"] == "美国中期选举"
+    assert titles["holiday"] == "休市：感恩节"
+    nvda = next(e for e in body["events"] if e["type"] == "earnings_nvda")
+    assert nvda["category"] == "财报" and nvda["impact"]["markets"][0]["name"] == "黄金"
+    assert "同日" in nvda["notes"][0]
+
+
+def test_api_rejects_unknown_lang():
+    assert client.get("/api/events", params={"lang": "fr"}).status_code == 422

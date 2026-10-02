@@ -24,6 +24,8 @@ The public copy runs with `MC_READ_ONLY=1`, so visitors can browse but not add o
 
 - **Month and list views.** Each day is tinted by a risk score built from its events' importance. The **week ahead** strip summarizes what matters in the next 7 days.
 - **Impact panel for every event**: what it is, why it moves markets, typical reaction, scenarios, assets affected, sensitive sectors, and what to watch.
+- **Cross-market impact**: for every event, how sensitive **Gold, Bitcoin, US stocks, Japan (Nikkei · JPY) and China (CSI 300 · Hang Seng · CNH)** are, and which way they usually move.
+- **English / 中文**: switch language in the header. Every event, impact profile and note is translated. The site follows the browser language by default; `?lang=zh` forces Chinese.
 - **Context notes**: flags data released during the Fed's pre-meeting blackout, days with several high-impact events, and releases that happen while the market is closed.
 - **Custom events**: add your own events (e.g. a stock you hold reporting earnings) and reuse a built-in impact template.
 - **Calendar export**: `/api/calendar.ics` works with Google, Apple and Outlook calendars.
@@ -44,7 +46,7 @@ Typical-move figures are rough post-2020 historical tendencies. **They are not f
 
 | Endpoint | Description |
 |---|---|
-| `GET /api/events?start=&end=&importance=high&category=Inflation` | Events and per-day risk |
+| `GET /api/events?start=&end=&importance=high&category=Inflation&lang=zh` | Events and per-day risk (`lang` = `en` or `zh` on all read endpoints) |
 | `GET /api/week?start=` | 7-day outlook (medium/high only) |
 | `GET /api/event-types` | All impact profiles |
 | `POST /api/custom-events` | `{date, title, time_et?, importance?, template?, description?, impact_notes?}` |
@@ -58,6 +60,8 @@ Interactive docs are at `/docs`.
 ```
 app/dates.py      NYSE holidays, early closes, business-day rules
 app/impact.py     Impact profiles (the knowledge base, edit to tune)
+app/impact_zh.py  Chinese text for the impact profiles
+app/markets.py    Per-event impact on Gold / BTC / US / Japan / China (EN + 中文)
 app/events.py     Event generation, cross-event annotations, risk score
 app/main.py       FastAPI routes
 static/           Frontend (vanilla JS, no build step)

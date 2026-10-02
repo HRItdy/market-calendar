@@ -36,7 +36,7 @@
 * { box-sizing: border-box; }
 body {
   margin: 0; background: var(--bg); color: var(--ink);
-  font: 14px/1.45 Inter, system-ui, -apple-system, sans-serif;
+  font: 14px/1.5 Inter, "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
   padding: 0 16px 40px; max-width: 1280px; margin-inline: auto;
 }
 h1, h2, h3 { margin: 0; letter-spacing: -.01em; }
@@ -81,7 +81,7 @@ h2 { font-size: 16px; }
 .chip.on { color: var(--ink); border-color: var(--ink); font-weight: 600; }
 .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; }
 .dot.high { background: var(--high); } .dot.medium { background: var(--medium); } .dot.low { background: var(--low); }
-.view-toggle { display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.view-toggle, .lang-toggle { display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
 .seg { border: 0; background: var(--panel); color: var(--muted); padding: 6px 12px; font: inherit; cursor: pointer; }
 .seg.on { background: var(--ink); color: var(--panel); font-weight: 600; }
 
@@ -152,6 +152,26 @@ h2 { font-size: 16px; }
 .estimated { color: var(--medium); font-weight: 600; }
 .d-sec ul { margin: 0; padding-left: 18px; }
 
+/* cross-market impact */
+.hint { color: var(--muted); font-size: 12px; margin: -2px 0 8px !important; }
+.mk-grid { display: grid; gap: 8px; }
+.mk { border: 1px solid var(--line); border-left: 3px solid var(--low); border-radius: 8px; padding: 8px 10px; }
+.mk.high { border-left-color: var(--high); }
+.mk.medium { border-left-color: var(--medium); }
+.mk-head { display: flex; align-items: center; gap: 8px; margin-bottom: 3px; }
+.mk-head b { flex: 1; min-width: 0; }
+.mk-lvl { font-size: 12px; color: var(--muted); min-width: 2.5em; text-align: right; }
+.mk p { margin: 0; color: var(--ink); }
+.meter { display: inline-flex; gap: 2px; }
+.meter i { width: 6px; height: 12px; border-radius: 2px; background: var(--line); }
+.mk.low .meter i:nth-child(1) { background: var(--low); }
+.mk.medium .meter i:nth-child(-n+2) { background: var(--medium); }
+.mk.high .meter i { background: var(--high); }
+.mk-dots { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+.mk-dot { font-size: 11px; border-radius: 4px; padding: 0 6px; border: 1px solid var(--line); color: var(--muted); }
+.mk-dot.high { border-color: color-mix(in srgb, var(--high) 50%, var(--line)); color: var(--high); font-weight: 600; }
+.mk-dot.medium { border-color: color-mix(in srgb, var(--medium) 50%, var(--line)); color: var(--medium); }
+
 /* dialog */
 dialog { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--ink); width: min(480px, calc(100% - 32px)); padding: 20px; box-shadow: var(--shadow); }
 dialog::backdrop { background: rgba(0, 0, 0, .4); }
@@ -171,6 +191,7 @@ dialog input, dialog select, dialog textarea { font: inherit; font-weight: 400; 
   .month { display: none; }
   .list { display: block !important; }
   .view-toggle { display: none; }
+  .top-actions { flex-wrap: wrap; }
   .list-day { grid-template-columns: 1fr; }
   .list-date { border-right: 0; border-bottom: 1px solid var(--line); padding: 8px 12px; }
   .row { flex-direction: column; gap: 0; }

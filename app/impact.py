@@ -9,6 +9,11 @@ from __future__ import annotations
 
 from copy import deepcopy
 
+from .impact_zh import CATEGORY_ZH, ZH
+from .markets import markets_for
+
+LANGS = ("en", "zh")
+
 # Weight used for the daily "risk score" (sum of weights of events that day).
 IMPORTANCE_WEIGHT = {"high": 3, "medium": 2, "low": 1}
 
@@ -391,14 +396,24 @@ PROFILES: dict[str, dict] = {
 }
 
 
-def profile(event_type: str) -> dict:
-    """Resolve a profile, applying single-level inheritance."""
-    p = deepcopy(PROFILES.get(event_type, PROFILES["custom"]))
-    parent = p.pop("inherits", None)
+def _resolve(table: dict, key: str, parent: str | None = None) -> dict:
+    """Copy a profile, applying single-level inheritance (`inherits` + `watch_extra`)."""
+    p = deepcopy(table[key])
+    parent = p.pop("inherits", parent)
     if parent:
-        base = deepcopy(PROFILES[parent])
+        base = deepcopy(table[parent])
         extra = p.pop("watch_extra", [])
         base.update(p)
         base["watch"] = base.get("watch", []) + extra
         p = base
+    return p
+
+
+def profile(event_type: str, lang: str = "en") -> dict:
+    key = event_type if event_type in PROFILES else "custom"
+    p = _resolve(PROFILES, key)
+    if lang == "zh":
+        p.update(_resolve(ZH, key, parent=PROFILES[key].get("inherits")))
+        p["category"] = CATEGORY_ZH[p["category"]]
+    p["markets"] = markets_for(key, lang)
     return p
