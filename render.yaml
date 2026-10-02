@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: market-calendar
+    runtime: docker
+    plan: free
+    healthCheckPath: /api/config
+    envVars:
+      - key: MC_READ_ONLY
+        value: "1"

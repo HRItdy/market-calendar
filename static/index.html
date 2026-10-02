@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Market Events Calendar</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">◆</span>
+      <div>
+        <h1>Market Events Calendar</h1>
+        <p class="sub">Scheduled events that move US stocks, with each one's likely impact</p>
+      </div>
+    </div>
+    <div class="top-actions">
+      <a class="btn ghost" id="icsLink" href="/api/calendar.ics" title="Subscribe in Google/Apple/Outlook calendar">⤓ Export .ics</a>
+      <button class="btn" id="addBtn">+ Add event</button>
+    </div>
+  </header>
+
+  <section class="week" aria-labelledby="weekTitle">
+    <h2 id="weekTitle">Week ahead</h2>
+    <div id="weekStrip" class="week-strip"></div>
+  </section>
+
+  <section class="toolbar">
+    <div class="nav">
+      <button class="btn icon" id="prev" aria-label="Previous month">‹</button>
+      <h2 id="monthLabel"></h2>
+      <button class="btn icon" id="next" aria-label="Next month">›</button>
+      <button class="btn ghost" id="today">Today</button>
+    </div>
+    <div class="filters" id="filters" role="group" aria-label="Filter by importance">
+      <button class="chip on" data-imp="high"><i class="dot high"></i>High</button>
+      <button class="chip on" data-imp="medium"><i class="dot medium"></i>Medium</button>
+      <button class="chip" data-imp="low"><i class="dot low"></i>Low</button>
+    </div>
+    <div class="view-toggle" role="tablist">
+      <button class="seg on" data-view="month" role="tab">Month</button>
+      <button class="seg" data-view="list" role="tab">List</button>
+    </div>
+  </section>
+
+  <div id="warnings"></div>
+
+  <main>
+    <div id="month" class="month"></div>
+    <div id="list" class="list" hidden></div>
+  </main>
+
+  <p class="legend">
+    <span><b>✓</b> confirmed date</span>
+    <span><b>~</b> estimated from the usual release pattern; check the agency calendar</span>
+    <span>All times US Eastern</span>
+  </p>
+  <p class="disclaimer">For education only, not investment advice. Typical moves are rough historical tendencies, not forecasts.</p>
+
+  <aside id="drawer" class="drawer" aria-hidden="true">
+    <div class="drawer-inner">
+      <button class="btn icon close" id="closeDrawer" aria-label="Close">×</button>
+      <div id="drawerBody"></div>
+    </div>
+  </aside>
+  <div id="scrim" class="scrim" hidden></div>
+
+  <dialog id="addDialog">
+    <form method="dialog" id="addForm">
+      <h3>Add a custom event</h3>
+      <label>Title <input name="title" required maxlength="120" placeholder="e.g. TSLA earnings" /></label>
+      <div class="row">
+        <label>Date <input name="date" type="date" required /></label>
+        <label>Time (ET) <input name="time_et" type="time" /></label>
+      </div>
+      <div class="row">
+        <label>Importance
+          <select name="importance"><option value="">Use template</option><option>high</option><option>medium</option><option>low</option></select>
+        </label>
+        <label>Impact template <select name="template" id="templateSelect"></select></label>
+      </div>
+      <label>Description <input name="description" maxlength="500" placeholder="Optional" /></label>
+      <label>Your impact notes <textarea name="impact_notes" rows="3" maxlength="1000" placeholder="Optional: why it matters to you"></textarea></label>
+      <p class="form-error" id="formError"></p>
+      <div class="dialog-actions">
+        <button class="btn ghost" value="cancel" formnovalidate>Cancel</button>
+        <button class="btn" value="ok" id="saveBtn">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

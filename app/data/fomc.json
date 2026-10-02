@@ -1,0 +1,13 @@
+{
+  "_note": "Official FOMC meeting schedules (decision day = second day). Source: federalreserve.gov/monetarypolicy/fomccalendars.htm. sep=true means Summary of Economic Projections (dot plot) is released. Add future years here when the Fed publishes them.",
+  "2026": [
+    {"start": "2026-01-27", "end": "2026-01-28", "sep": false},
+    {"start": "2026-03-17", "end": "2026-03-18", "sep": true},
+    {"start": "2026-04-28", "end": "2026-04-29", "sep": false},
+    {"start": "2026-06-16", "end": "2026-06-17", "sep": true},
+    {"start": "2026-07-28", "end": "2026-07-29", "sep": false},
+    {"start": "2026-09-15", "end": "2026-09-16", "sep": true},
+    {"start": "2026-10-27", "end": "2026-10-28", "sep": false},
+    {"start": "2026-12-08", "end": "2026-12-09", "sep": true}
+  ]
+}
