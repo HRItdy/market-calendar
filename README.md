@@ -10,7 +10,7 @@ uvicorn app.main:app --reload --port 8000
 # open http://localhost:8000
 ```
 
-Tests: `pip install -r requirements-dev.txt && pytest`
+Tests: `pip install -r requirements-dev.txt && pytest`, and `node --test tests/js/orderflow.test.cjs` for the order-flow engine
 
 ## Deploy publicly (Render)
 
@@ -27,6 +27,13 @@ The public copy runs with `MC_READ_ONLY=1`, so visitors can browse but not add o
 - **Cross-market impact**: for every event, how sensitive **Gold, Bitcoin, US stocks, Japan (Nikkei · JPY) and China (CSI 300 · Hang Seng · CNH)** are, and which way they usually move.
 - **English / 中文**: switch language in the header. Every event, impact profile and note is translated. The site follows the browser language by default; `?lang=zh` forces Chinese.
 - **Live K-lines** at `/markets`: candlestick charts for **Web3** (BTC, ETH, SOL, BNB, XRP, DOGE), **Gold** (COMEX futures, PAXG, silver) and **US stocks** (S&P 500, Nasdaq, Dow, SPY, QQQ, NVDA, AAPL, TSLA, or any ticker you type). Choose 1m / 5m / 15m / 1H / 1D. Past high-impact events for each market are drawn on the chart, and the next ones are listed below it. Candle colors can be green-up (US convention) or red-up (Chinese convention).
+- **Order-flow layer** on every chart (toggle "Order flow"):
+  - **Volume profile** over a recent window, split into buy/sell volume, with **POC** (most-traded price) and the **70% value area** (VAH/VAL)
+  - **Session VWAP** with ±1σ/±2σ bands
+  - **Delta & CVD pane**: aggressive buy − sell volume per bar and its running total
+  - **Signals**: *absorption* (heavy aggression that fails to move price) and *delta divergence* (new swing extreme that CVD doesn't confirm)
+  - **Read**: a rule-based **BUY / SELL / WAIT** call with confidence, entry, stop, two targets (at least 1R), R:R and the reasoning behind each factor
+  - Crypto delta is **real** (Binance taker-buy volume). Gold and US stocks have no aggressor data on the free feed, so their delta is **estimated** from candle shape and their confidence is reduced.
 - **Context notes**: flags data released during the Fed's pre-meeting blackout, days with several high-impact events, and releases that happen while the market is closed.
 - **Custom events**: add your own events (e.g. a stock you hold reporting earnings) and reuse a built-in impact template.
 - **Calendar export**: `/api/calendar.ics` works with Google, Apple and Outlook calendars.
@@ -51,7 +58,7 @@ The public copy runs with `MC_READ_ONLY=1`, so visitors can browse but not add o
 
 Check estimated dates against the official calendars (BLS, BEA, Census). To add a new year's FOMC schedule, add it to `app/data/fomc.json`; the UI warns when a year is missing.
 
-Typical-move figures are rough post-2020 historical tendencies. **They are not forecasts or investment advice.**
+Typical-move figures are rough post-2020 historical tendencies. **They are not forecasts or investment advice.** The order-flow read is a transparent rule-based model for learning; it has not been backtested and is not a trading system.
 
 ## API
 
@@ -75,6 +82,7 @@ app/impact.py     Impact profiles (the knowledge base, edit to tune)
 app/impact_zh.py  Chinese text for the impact profiles
 app/markets.py    Per-event impact on Gold / BTC / US / Japan / China (EN + 中文)
 app/quotes.py     Yahoo Finance candle proxy with caching
+static/orderflow.js  Order-flow engine: delta/CVD, VWAP, volume profile, signals, buy/sell read
 app/events.py     Event generation, cross-event annotations, risk score
 app/main.py       FastAPI routes
 static/           Frontend (vanilla JS, no build step)

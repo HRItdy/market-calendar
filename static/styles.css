@@ -216,6 +216,46 @@ h2 { font-size: 16px; }
 .up-why { color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mk-flag { display: inline-block; width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 8px solid var(--accent); vertical-align: middle; }
 
+/* order flow */
+.of-toggle { margin-left: auto; }
+.profile-canvas { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
+.delta-wrap { position: relative; border-top: 1px dashed var(--line); }
+.delta-chart { height: 110px; }
+.delta-legend { position: absolute; top: 4px; left: 8px; font-size: 12px; color: var(--muted); display: flex; gap: 10px; pointer-events: none; z-index: 3; font-variant-numeric: tabular-nums; }
+.of-card { margin-top: 12px; border: 1px solid var(--line); border-radius: 10px; padding: 12px; background: var(--bg); }
+.of-card:empty { display: none; }
+.of-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.of-head h4 { margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: .05em; }
+.of-sub { color: var(--muted); font-size: 12px; }
+.of-grid { display: grid; grid-template-columns: 170px 240px 1fr; gap: 14px; align-items: start; }
+.of-bias { border-radius: 10px; padding: 12px; background: var(--panel); border: 1px solid var(--line); text-align: center; }
+.bias-pill { font-size: 22px; font-weight: 800; letter-spacing: .04em; border-radius: 8px; padding: 6px 0; color: #fff; background: var(--low); }
+.of-bias.buy .bias-pill { background: #16a34a; }
+.of-bias.sell .bias-pill { background: #dc2626; }
+.bias-sub { font-size: 12px; color: var(--muted); margin: 6px 0 10px; }
+.conf { display: grid; grid-template-columns: auto 1fr auto; gap: 6px; align-items: center; font-size: 12px; color: var(--muted); }
+.conf-bar { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.conf-bar i { display: block; height: 100%; background: var(--accent); }
+.conf b { color: var(--ink); }
+.of-score { font-size: 11px; color: var(--muted); margin-top: 6px; font-variant-numeric: tabular-nums; }
+.of-plan { display: grid; gap: 4px; }
+.plan-row { display: flex; justify-content: space-between; gap: 10px; padding: 5px 8px; border-radius: 6px; background: var(--panel); border: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+.plan-row small { color: var(--muted); font-size: 11px; }
+.plan-row.stop b { color: #ef4444; }
+.plan-row.tgt b { color: #10b981; }
+.of-levels { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.lvl { font-size: 11px; border-radius: 4px; padding: 1px 6px; border: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+.lvl.poc, .lvl.va { color: #8b5cf6; border-color: color-mix(in srgb, #8b5cf6 40%, var(--line)); }
+.lvl.vw { color: #d97706; border-color: color-mix(in srgb, #f59e0b 40%, var(--line)); }
+.of-reasons { margin: 0; padding: 0; list-style: none; display: grid; gap: 5px; }
+.of-reasons li { padding-left: 18px; position: relative; font-size: 13px; }
+.of-reasons li::before { position: absolute; left: 0; top: 0; font-weight: 700; }
+.of-reasons li.pos::before { content: "▲"; color: #16a34a; }
+.of-reasons li.neg::before { content: "▼"; color: #dc2626; }
+.of-reasons li.neu::before { content: "•"; color: var(--muted); }
+.of-note { margin: 10px 0 0; font-size: 12px; color: var(--muted); }
+.of-empty { margin: 0; color: var(--muted); }
+
 /* dialog */
 dialog { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--ink); width: min(480px, calc(100% - 32px)); padding: 20px; box-shadow: var(--shadow); }
 dialog::backdrop { background: rgba(0, 0, 0, .4); }
@@ -237,6 +277,8 @@ dialog input, dialog select, dialog textarea { font: inherit; font-weight: 400; 
   .view-toggle[role="tablist"] { display: none; }
   .top-actions { flex-wrap: wrap; }
   .chart { height: 300px; }
+  .of-grid { grid-template-columns: 1fr; }
+  .of-toggle { margin-left: 0; }
   .up-ev { grid-template-columns: 1fr; gap: 0; }
   .up-why { white-space: normal; }
   .status { margin-left: 0; }

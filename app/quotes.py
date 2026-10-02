@@ -97,6 +97,7 @@ def candles(symbol: str, interval: str) -> dict:
         "currency": meta.get("currency"),
         "exchange": meta.get("fullExchangeName") or meta.get("exchangeName"),
         "exchange_tz": meta.get("exchangeTimezoneName"),
+        "gmtoffset": meta.get("gmtoffset") or 0,
         "price": meta.get("regularMarketPrice"),
         "prev_close": _prev_close(bars, meta),
         "market_time": meta.get("regularMarketTime"),
