@@ -131,3 +131,58 @@ test("S/R zones stay narrow (no chaining across a trend)", () => {
   const r = PA.analyze(path(pts));
   for (const z of r.zones) assert.ok(z.hi - z.lo <= 0.6 * r.atr + 0.3 * r.atr + 1e-9, JSON.stringify(z));
 });
+
+// Shared scenario: pivot A (124–129), fast drop into pivot B (101–106), weak new low at 95.
+const ONE_B = [150, 130, 124, 131, 123, 129, 99, 107, 101, 106, 100, 105];
+
+test("1st-type points carry the entering/leaving strokes and MACD areas", () => {
+  const r = Chan.analyze(path([...ONE_B, 95, 103, 98, 104]));
+  const one = r.points.find((p) => p.type === "1B" && !p.forming);
+  assert.ok(one);
+  assert.equal(r.strokes[one.enterK].dir, -1);
+  assert.ok(one.leaveArea < one.enterArea);
+  const two = r.points.find((p) => p.type === "2B" && !p.forming);
+  assert.equal(two.refIdx, one.idx);
+});
+
+test("a 1st-type buy point is flagged while its stroke is still forming", () => {
+  // Same structure, but the chart ends during the new low: the drop decelerates (MACD histogram
+  // shrinking) and no bottom fractal exists yet.
+  const bars = path([...ONE_B, 97.5]);
+  for (let i = 0; i < 10; i++) {
+    const o = bars.at(-1).close, c = o - 0.2;
+    bars.push({ time: bars.at(-1).time + 60, open: o, high: o + 0.05, low: c - 0.05, close: c, volume: 100 });
+  }
+  const r = Chan.analyze(bars);
+  const f = r.points.find((p) => p.type === "1B" && p.forming);
+  assert.ok(f, JSON.stringify(r.points.map((p) => [p.type, p.forming])));
+  assert.ok(f.leaveArea < f.enterArea && f.price < 98.9); // below pivot B's DD
+  assert.ok(r.read.reasons.some((x) => x.key === "chanPoint1B" && x.args.forming));
+});
+
+test("a 2nd-type buy point is flagged when the pullback holds above 1B and turns up", () => {
+  const bars = path([...ONE_B, 95, 103, 98]);
+  bars.push({ ...bars.at(-1), time: bars.at(-1).time + 60, open: 98, close: 98.6, high: 98.7, low: 97.95 });
+  const r = Chan.analyze(bars);
+  const one = r.points.find((p) => p.type === "1B");
+  const f = r.points.find((p) => p.type === "2B" && p.forming);
+  assert.ok(one && f, JSON.stringify(r.points.map((p) => [p.type, p.forming])));
+  assert.ok(f.price > one.price && f.refIdx === one.idx);
+});
+
+test("no forming 2B if the pullback breaks the 1B low", () => {
+  const bars = path([...ONE_B, 95, 103, 93]);
+  bars.push({ ...bars.at(-1), time: bars.at(-1).time + 60, open: 93, close: 93.5, high: 93.6, low: 92.95 });
+  const r = Chan.analyze(bars);
+  assert.ok(!r.points.some((p) => p.type === "2B" && p.forming));
+});
+
+test("invalidation follows Chan rules: 2B by its 1B, 3B by re-entering the pivot", () => {
+  assert.equal(Chan.invalidation({ type: "1B", price: 95 }), 95);
+  assert.equal(Chan.invalidation({ type: "2B", price: 98, refPrice: 95 }), 95);
+  assert.equal(Chan.invalidation({ type: "3B", price: 115, pivot: { zg: 110, zd: 104 } }), 110);
+  assert.equal(Chan.invalidation({ type: "3S", price: 100, pivot: { zg: 110, zd: 104 } }), 104);
+  const bars = [{ low: 99 }, { low: 97 }, { low: 94.5 }].map((b, i) => ({ ...b, high: b.low + 1, time: i }));
+  const twoB = { type: "2B", idx: 0, price: 98, refPrice: 95 };
+  assert.equal(Chan.brokenAt(bars, twoB), 2); // dipping under the 2B low (97) is not a break; under 1B (94.5) is
+});

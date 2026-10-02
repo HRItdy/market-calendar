@@ -157,17 +157,18 @@
     const pts = [];
     const pivotBefore = (k) => [...pivots].reverse().find((p) => p.last < k);
     for (let k = 2; k < strokes.length; k++) {
-      const s = strokes[k], prev = strokes[k - 2];
+      const s = strokes[k];
       const p = pivotBefore(k);
       // 1st type: trend divergence (趋势背驰). Needs ≥ 2 pivots stepping the same way; the stroke
-      // leaving the last pivot makes a new extreme with less MACD area than the stroke that entered it.
-      const before = pivots.filter((q) => q.last < k);
-      const [p1, p2] = before.slice(-2);
+      // leaving the last pivot (离开段) makes a new extreme with less MACD area than the stroke
+      // that entered it (进入段).
+      const [p1, p2] = pivots.filter((q) => q.last < k).slice(-2);
       if (p2 && p2.last === k - 1 && p2.first > 0) {
         const enter = strokes[p2.first - 1];
         const downTrend = p1 && p2.zg < p1.zd, upTrend = p1 && p2.zd > p1.zg;
-        if (downTrend && s.dir === -1 && enter.dir === -1 && s.low < p2.dd && s.area < enter.area) pts.push({ type: "1B", k, idx: s.to.idx, price: s.low });
-        if (upTrend && s.dir === 1 && enter.dir === 1 && s.high > p2.gg && s.area < enter.area) pts.push({ type: "1S", k, idx: s.to.idx, price: s.high });
+        const div = { enterK: p2.first - 1, enterArea: enter.area, leaveArea: s.area, pivot: p2 };
+        if (downTrend && s.dir === -1 && enter.dir === -1 && s.low < p2.dd && s.area < enter.area) pts.push({ type: "1B", k, idx: s.to.idx, price: s.low, ...div });
+        if (upTrend && s.dir === 1 && enter.dir === 1 && s.high > p2.gg && s.area < enter.area) pts.push({ type: "1S", k, idx: s.to.idx, price: s.high, ...div });
       }
       // 3rd type: leave a pivot, pull back without re-entering it.
       if (p && p.last === k - 2) {
@@ -176,14 +177,71 @@
         if (leave.dir === -1 && leave.low < p.zd && s.dir === 1 && s.high < p.zd) pts.push({ type: "3S", k, idx: s.to.idx, price: s.high, pivot: p });
       }
     }
-    // 2nd type: first same-direction pullback after a 1st-type point that holds it.
+    // 2nd type: the first same-direction pullback after a 1st-type point that holds it.
     for (const one of pts.filter((x) => x.type === "1B" || x.type === "1S")) {
       const s = strokes[one.k + 2];
       if (!s) continue;
-      if (one.type === "1B" && s.dir === -1 && s.low > one.price) pts.push({ type: "2B", k: one.k + 2, idx: s.to.idx, price: s.low });
-      if (one.type === "1S" && s.dir === 1 && s.high < one.price) pts.push({ type: "2S", k: one.k + 2, idx: s.to.idx, price: s.high });
+      const ref = { refIdx: one.idx, refPrice: one.price };
+      if (one.type === "1B" && s.dir === -1 && s.low > one.price) pts.push({ type: "2B", k: one.k + 2, idx: s.to.idx, price: s.low, ...ref });
+      if (one.type === "1S" && s.dir === 1 && s.high < one.price) pts.push({ type: "2S", k: one.k + 2, idx: s.to.idx, price: s.high, ...ref });
     }
     return pts.sort((a, b) => a.k - b.k);
+  }
+
+  /* Points on the move that is still forming after the last confirmed stroke vertex, so a
+   * 1st/2nd-type point can be seen as it happens rather than only once its stroke completes.
+   *   forming 1B: the move breaks below the last pivot's DD (in a two-pivot downtrend) with less
+   *               MACD area than the stroke that entered the pivot, and the histogram is shrinking.
+   *   forming 2B: after a confirmed 1B and the up stroke from it, the pullback holds above the
+   *               1B low and price has turned back up.  (Mirrored for 1S / 2S.) */
+  function formingPoints(bars, hist, strokes, pivots, pts) {
+    const last = strokes[strokes.length - 1];
+    if (!last) return [];
+    const from = last.to.idx, n = bars.length;
+    if (n - 1 - from < 2) return [];
+    const dir = -last.dir;
+    const k = strokes.length; // index the forming stroke would get
+    let ext = from + 1;
+    for (let i = from + 1; i < n; i++) if (dir === -1 ? bars[i].low < bars[ext].low : bars[i].high > bars[ext].high) ext = i;
+    const extPrice = dir === -1 ? bars[ext].low : bars[ext].high;
+    let area = 0, peak = 0;
+    for (let i = from + 1; i < n; i++) if (Math.sign(hist[i].hist) === dir) { area += Math.abs(hist[i].hist); peak = Math.max(peak, Math.abs(hist[i].hist)); }
+    const fading = Math.abs(hist[n - 1].hist) < peak || Math.sign(hist[n - 1].hist) !== dir;
+    const out = [];
+
+    const [p1, p2] = pivots.filter((q) => q.last === k - 1 || q.last < k - 1).slice(-2);
+    if (p2 && p2.last === k - 1 && p2.first > 0 && p1) {
+      const enter = strokes[p2.first - 1];
+      const div = { enterK: p2.first - 1, enterArea: enter.area, leaveArea: area, pivot: p2, leaveFrom: from, forming: true };
+      if (dir === -1 && enter.dir === -1 && p2.zg < p1.zd && extPrice < p2.dd && area < enter.area && fading)
+        out.push({ type: "1B", k, idx: ext, price: extPrice, ...div });
+      if (dir === 1 && enter.dir === 1 && p2.zd > p1.zg && extPrice > p2.gg && area < enter.area && fading)
+        out.push({ type: "1S", k, idx: ext, price: extPrice, ...div });
+    }
+    const one = pts.find((x) => x.k === k - 2 && (x.type === "1B" || x.type === "1S"));
+    const close = bars[n - 1].close;
+    if (one && ext < n - 1) {
+      const ref = { refIdx: one.idx, refPrice: one.price, forming: true };
+      if (one.type === "1B" && dir === -1 && extPrice > one.price && close > extPrice) out.push({ type: "2B", k, idx: ext, price: extPrice, ...ref });
+      if (one.type === "1S" && dir === 1 && extPrice < one.price && close < extPrice) out.push({ type: "2S", k, idx: ext, price: extPrice, ...ref });
+    }
+    return out;
+  }
+
+  /* The price that invalidates a point (Chan Lun rules):
+   *   1B/1S: the point itself;  2B/2S: the 1st-type point it came from;
+   *   3B/3S: back inside the pivot (below ZG / above ZD). */
+  function invalidation(pt) {
+    if (pt.type[0] === "2") return pt.refPrice;
+    if (pt.type[0] === "3") return pt.type === "3B" ? pt.pivot.zg : pt.pivot.zd;
+    return pt.price;
+  }
+
+  // Index of the first bar after the point that breaks its invalidation level, or -1.
+  function brokenAt(bars, pt) {
+    const lvl = invalidation(pt), buy = pt.type.endsWith("B");
+    for (let i = pt.idx + 1; i < bars.length; i++) if (buy ? bars[i].low < lvl : bars[i].high > lvl) return i;
+    return -1;
   }
 
   function analyze(bars) {
@@ -195,7 +253,8 @@
     const strokes = strokesFrom(vertices, hist);
     const segments = segmentsFrom(vertices);
     const pivots = pivotsFrom(strokes);
-    const points = buySellPoints(strokes, pivots);
+    const confirmed = buySellPoints(strokes, pivots);
+    const points = [...confirmed, ...formingPoints(bars, hist, strokes, pivots, confirmed)];
     return { merged, fractals: fx, vertices, strokes, segments, pivots, points, macd: hist, read: read(bars, strokes, segments, pivots, points) };
   }
 
@@ -234,13 +293,13 @@
     const recent = [...points].reverse().find((p) => p.k >= strokes.length - 3);
     if (recent) {
       const buy = recent.type.endsWith("B");
-      const weight = recent.type.startsWith("1") ? 1.5 : 2;
-      const broken = buy ? price < recent.price : price > recent.price;
+      const weight = (recent.type.startsWith("1") ? 1.5 : 2) * (recent.forming ? 0.6 : 1);
+      const broken = buy ? price < invalidation(recent) : price > invalidation(recent);
       const pending = recent.k === strokes.length - 1;
       if (broken) add(buy ? -0.5 : 0.5, "chanPointFailed", { type: recent.type, price: recent.price });
       else {
-        add(buy ? weight : -weight, `chanPoint${recent.type}`, { price: recent.price, pending });
-        if (buy) stops.long = recent.price; else stops.short = recent.price;
+        add(buy ? weight : -weight, `chanPoint${recent.type}`, { price: recent.price, pending, forming: !!recent.forming });
+        if (buy) stops.long = invalidation(recent); else stops.short = invalidation(recent);
       }
       levels.push({ price: recent.price, label: recent.type });
     }
@@ -248,7 +307,7 @@
     return { theory: "chan", score, max: 5, reasons, levels, stops };
   }
 
-  const api = { macd, mergeBars, fractals, strokeVertices, strokesFrom, segmentsFrom, pivotsFrom, buySellPoints, analyze };
+  const api = { macd, mergeBars, fractals, strokeVertices, strokesFrom, segmentsFrom, pivotsFrom, buySellPoints, formingPoints, invalidation, brokenAt, analyze };
   root.Chan = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof window !== "undefined" ? window : globalThis);

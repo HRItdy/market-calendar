@@ -221,6 +221,22 @@ h2 { font-size: 16px; }
 .overlay-canvas { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
 .sub-wrap { position: relative; border-top: 1px dashed var(--line); }
 .sub-chart { height: 110px; }
+.macd-canvas { position: absolute; top: 0; left: 0; pointer-events: none; z-index: 2; }
+.div-note { color: #db2777; margin-left: 6px; }
+.pt-list { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 10px; }
+.pt-head { display: flex; gap: 10px; align-items: baseline; margin-bottom: 6px; }
+.pt-head h4 { margin: 0; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+.pt-head span { font-size: 11px; color: var(--muted); }
+.pt-row { display: grid; grid-template-columns: 64px 110px 1fr 110px 90px; gap: 10px; align-items: center; width: 100%; text-align: left;
+  border: 0; border-radius: 6px; background: transparent; color: inherit; font: inherit; padding: 5px 6px; cursor: pointer; font-variant-numeric: tabular-nums; }
+.pt-row:hover { background: var(--panel); }
+.pt-type { font-weight: 800; border-radius: 4px; padding: 1px 6px; text-align: center; color: #fff; }
+.pt-type.buy { background: #16a34a; } .pt-type.sell { background: #dc2626; }
+.pt-type.t3 { opacity: .7; }
+.pt-name, .pt-when { color: var(--muted); font-size: 13px; }
+.pt-price { font-weight: 600; text-align: right; }
+.pt-status { font-size: 12px; text-align: right; color: var(--muted); }
+.pt-status.forming { color: #d97706; font-weight: 600; } .pt-status.broken { color: #dc2626; text-decoration: line-through; } .pt-status.confirmed { color: #16a34a; }
 .sub-legend { position: absolute; top: 4px; left: 8px; font-size: 12px; color: var(--muted); display: flex; gap: 10px; pointer-events: none; z-index: 3; font-variant-numeric: tabular-nums; }
 .of-card { margin-top: 12px; border: 1px solid var(--line); border-radius: 10px; padding: 12px; background: var(--bg); }
 .of-card:empty { display: none; }
@@ -288,6 +304,8 @@ dialog input, dialog select, dialog textarea { font: inherit; font-weight: 400; 
   .top-actions { flex-wrap: wrap; }
   .chart { height: 300px; }
   .of-grid { grid-template-columns: 1fr; }
+  .pt-row { grid-template-columns: 56px 1fr 90px; }
+  .pt-name, .pt-status { display: none; }
   .theories { margin-left: 0; }
   .up-ev { grid-template-columns: 1fr; gap: 0; }
   .up-why { white-space: normal; }

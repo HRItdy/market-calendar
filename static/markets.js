@@ -104,6 +104,7 @@ const fmtVol = (v) => {
   const a = Math.abs(v), s = v < 0 ? "−" : "";
   return s + (a >= 1e9 ? (a / 1e9).toFixed(2) + "B" : a >= 1e6 ? (a / 1e6).toFixed(2) + "M" : a >= 1e3 ? (a / 1e3).toFixed(1) + "K" : a.toFixed(a < 10 ? 2 : 0));
 };
+const fmtSig = (x) => Number(x.toPrecision(3)).toLocaleString(LOCALE(), { maximumSignificantDigits: 3 });
 const fmtPct = (x) => `${x >= 0 ? "+" : "−"}${Math.abs(x * 100).toFixed(1)}%`;
 
 // ---------- data sources ----------
@@ -129,7 +130,8 @@ async function yahooData(sym, interval) {
 class Panel {
   constructor(group) {
     this.g = group;
-    this.selected = load(`mc.sym.${group.key}`, group.symbols[0].id);
+    // ?web3=ETH&gold=PAXG&us=SPY picks a panel's symbol (for shareable links).
+    this.selected = params.get(group.key)?.toUpperCase() || load(`mc.sym.${group.key}`, group.symbols[0].id);
     this.extra = load(`mc.extra.${group.key}`, []);
     this.priceLines = [];
     this.el = document.createElement("section");
@@ -156,7 +158,7 @@ class Panel {
       </div>
       <div class="chart-wrap"><div class="chart"></div><canvas class="overlay-canvas"></canvas><div class="ohlc"></div></div>
       <div class="sub-wrap" data-pane="of"><div class="sub-chart"></div><div class="sub-legend"><span class="dl-a">${t("delta")}</span> <span class="dl-b">${t("cvd")}</span></div></div>
-      <div class="sub-wrap" data-pane="chan"><div class="sub-chart"></div><div class="sub-legend"><span class="dl-a">${t("macd")}</span> <span class="dl-b"></span></div></div>
+      <div class="sub-wrap" data-pane="chan"><div class="sub-chart"></div><canvas class="macd-canvas"></canvas><div class="sub-legend"><span class="dl-a">${t("macd")}</span> <span class="dl-b"></span></div></div>
       <div class="of-card"></div>
       <div class="upcoming"><h4>${esc(t("upcoming"))}</h4><div class="up-list"></div></div>`;
     this.renderChips();
@@ -364,7 +366,8 @@ class Panel {
     const p = palette();
     const prec = precisionFor(bars.at(-1)?.close ?? 1);
     this.prec = prec;
-    const fmt = { priceFormat: { type: "price", precision: prec, minMove: 10 ** -prec } };
+    // 1 / 10 ** p, not 10 ** -p: V8 gives 0.00009999… for the latter, which breaks axis labels.
+    const fmt = { priceFormat: { type: "price", precision: prec, minMove: 1 / 10 ** prec } };
     [this.candles, this.vwapLine, ...this.bands, this.strokeLine, this.segmentLine, this.emaLine].forEach((s) => s.applyOptions(fmt));
     const range = keepView ? this.chart.timeScale().getVisibleLogicalRange() : null;
     this.candles.setData(bars.map((b) => ({ time: chartTime(b.time, iv), open: b.open, high: b.high, low: b.low, close: b.close })));
@@ -541,8 +544,10 @@ class Panel {
         ctx.strokeStyle = alpha(p.pivot, 0.7); ctx.lineWidth = 1;
         ctx.strokeRect(x1 + 0.5, y1 + 0.5, x2 - x1, y2 - y1);
       }
+      this.drawChanPoints(ctx, X, Y, paneW, p);
     }
     ctx.restore();
+    this.drawMacdOverlay();
 
     const prof = r.of?.profile;
     if (prof) {
@@ -564,6 +569,90 @@ class Panel {
         if (isPoc) { ctx.strokeStyle = p.poc; ctx.lineWidth = 1; ctx.strokeRect(x0 + 0.5, top + 0.5, len - 1, height - 1); }
       }
     }
+  }
+
+  // 1st/2nd-type points: invalidation level, 1B→2B link, and (latest) the 背驰 strokes.
+  drawChanPoints(ctx, X, Y, paneW, p) {
+    const c = this.res.chan, L = I18N[state.lang];
+    const major = c.points.filter((pt) => pt.type[0] !== "3");
+    for (const pt of major) {
+      const buy = pt.type.endsWith("B"), col = buy ? p.up : p.down;
+      const x = X(pt.idx), y = Y(pt.price);
+      if (x == null || y == null) continue;
+      // Level the point must hold: dashed to the right edge, or until price breaks it.
+      const brokeAt = Chan.brokenAt(this.bars, pt);
+      const xEnd = brokeAt > 0 ? X(brokeAt) ?? paneW : paneW;
+      ctx.strokeStyle = alpha(col, pt.forming ? 0.45 : 0.75); ctx.lineWidth = 1; ctx.setLineDash([5, 4]);
+      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(xEnd, y); ctx.stroke(); ctx.setLineDash([]);
+      // 2nd type: link back to its 1st-type point.
+      if (pt.refIdx != null) {
+        const x0 = X(pt.refIdx), y0 = Y(pt.refPrice);
+        if (x0 != null && y0 != null) {
+          ctx.strokeStyle = col; ctx.lineWidth = 1.5;
+          ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x, y); ctx.stroke();
+          ctx.fillStyle = col;
+          ctx.fillText(buy ? L.higherLow : L.lowerHigh, (x0 + x) / 2 + 4, (y0 + y) / 2 + (buy ? 14 : -6));
+        }
+      }
+    }
+    // Divergence of the latest 1st-type point: entering vs leaving stroke.
+    const one = [...major].reverse().find((pt) => pt.type[0] === "1");
+    if (!one) return;
+    const enter = c.strokes[one.enterK];
+    const leaveFrom = one.forming ? one.leaveFrom : c.strokes[one.k].from.idx;
+    const leaveFromPrice = one.forming ? this.bars[one.leaveFrom][one.type === "1B" ? "high" : "low"] : c.strokes[one.k].from.price;
+    const segs = [
+      [enter.from.idx, enter.from.price, enter.to.idx, enter.to.price, L.enterSeg],
+      [leaveFrom, leaveFromPrice, one.idx, one.price, L.leaveSeg],
+    ];
+    for (const [i0, p0, i1, p1, label] of segs) {
+      const x0 = X(i0), y0 = Y(p0), x1 = X(i1), y1 = Y(p1);
+      if ([x0, y0, x1, y1].some((v) => v == null)) continue;
+      ctx.strokeStyle = alpha(p.segment, 0.55); ctx.lineWidth = 6; ctx.lineCap = "round";
+      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke(); ctx.lineCap = "butt";
+      ctx.fillStyle = p.segment;
+      ctx.fillText(label, (x0 + x1) / 2 + 6, (y0 + y1) / 2);
+    }
+  }
+
+  // MACD pane: shade the histogram areas being compared for the latest 1st-type point.
+  drawMacdOverlay() {
+    const canvas = $(".macd-canvas", this.el);
+    const host = this.el.querySelectorAll(".sub-chart")[1];
+    const w = host.clientWidth, h = host.clientHeight, dpr = window.devicePixelRatio || 1;
+    if (canvas.width !== w * dpr || canvas.height !== h * dpr) {
+      canvas.width = w * dpr; canvas.height = h * dpr;
+      canvas.style.width = w + "px"; canvas.style.height = h + "px";
+    }
+    const ctx = canvas.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    const c = this.res?.chan;
+    const one = c && [...c.points].reverse().find((pt) => pt.type[0] === "1");
+    const legend = $(".dl-b", this.el.querySelectorAll(".sub-wrap")[1]);
+    const L = I18N[state.lang], p = palette();
+    const note = one ? L.divArea(fmtSig(one.enterArea), fmtSig(one.leaveArea)) : "";
+    if ((legend.dataset.div || "") !== note) { legend.dataset.div = note; this.renderSubLegends(); }
+    if (!one) return;
+    const ts = this.chanPane.timeScale();
+    const enter = c.strokes[one.enterK];
+    const leaveFrom = one.forming ? one.leaveFrom : c.strokes[one.k].from.idx;
+    const ranges = [[enter.from.idx, enter.to.idx, one.enterArea], [leaveFrom, one.idx, one.leaveArea]];
+    ctx.font = "11px Inter, 'Noto Sans SC', sans-serif";
+    for (const [a, b, area] of ranges) {
+      const x0 = ts.logicalToCoordinate(a), x1 = ts.logicalToCoordinate(b);
+      if (x0 == null || x1 == null) continue;
+      ctx.fillStyle = alpha(p.segment, 0.12);
+      ctx.fillRect(x0, 0, x1 - x0, h);
+      ctx.fillStyle = p.segment;
+      ctx.fillText(fmtSig(area), x0 + 3, h - 6);
+    }
+  }
+
+  pointStatus(pt) {
+    if (pt.forming) return "forming";
+    if (Chan.brokenAt(this.bars, pt) >= 0) return "broken";
+    return pt.k === this.res.chan.strokes.length - 1 ? "pending" : "confirmed";
   }
 
   // Calendar events + each active theory's signals as chart markers.
@@ -597,7 +686,15 @@ class Panel {
     if (r.chan) {
       for (const pt of r.chan.points) {
         const buy = pt.type.endsWith("B");
-        mk(pt.idx, { position: buy ? "belowBar" : "aboveBar", color: buy ? p.up : p.down, shape: buy ? "arrowUp" : "arrowDown", text: L.chanPt[pt.type], size: 1.4 });
+        const major = pt.type[0] !== "3";
+        const col = buy ? p.up : p.down;
+        mk(pt.idx, {
+          position: buy ? "belowBar" : "aboveBar",
+          color: pt.forming ? alpha(col, 0.6) : col,
+          shape: buy ? "arrowUp" : "arrowDown",
+          text: `${L.chanPt[pt.type]}${pt.forming ? "?" : ""}${major ? " " + fmtNum(pt.price, this.prec ?? 2) : ""}`,
+          size: major ? 2 : 1.2,
+        });
       }
     }
     if (r.pa) {
@@ -655,7 +752,33 @@ class Panel {
         <div class="of-plan">${plan}</div>
         <div class="th-groups">${groups}</div>
       </div>
-      ${notes.length ? `<p class="of-note">${notes.map(esc).join(" · ")}</p>` : ""}`;
+      ${notes.length ? `<p class="of-note">${notes.map(esc).join(" · ")}</p>` : ""}
+      ${r.chan ? this.chanListHtml() : ""}`;
+    card.querySelectorAll(".pt-row").forEach((row) => {
+      row.onclick = () => {
+        const i = +row.dataset.idx;
+        this.chart.timeScale().setVisibleLogicalRange({ from: i - 90, to: i + 40 });
+      };
+    });
+  }
+
+  chanListHtml() {
+    const L = I18N[state.lang], c = this.res.chan, iv = state.interval, prec = this.prec ?? 2;
+    const pts = [...c.points].sort((a, b) => b.idx - a.idx).slice(0, 10);
+    const when = (i) => new Date(this.bars[i].time * 1000).toLocaleString(LOCALE(), iv === "1d"
+      ? { year: "numeric", month: "short", day: "numeric" } : { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+    const rows = pts.map((pt) => {
+      const st = this.pointStatus(pt);
+      const buy = pt.type.endsWith("B");
+      return `<button class="pt-row" data-idx="${pt.idx}">
+        <span class="pt-type ${buy ? "buy" : "sell"} t${pt.type[0]}">${esc(L.chanPt[pt.type])}${pt.forming ? "?" : ""}</span>
+        <span class="pt-name">${esc(L.chanPtName[pt.type])}</span>
+        <span class="pt-when">${esc(when(pt.idx))}</span>
+        <span class="pt-price">${fmtNum(pt.price, prec)}</span>
+        <span class="pt-status ${st}">${esc(L.ptStatus[st])}</span></button>`;
+    }).join("");
+    return `<div class="pt-list"><div class="pt-head"><h4>${esc(L.chanList)}</h4><span>${esc(L.chanListHint)}</span></div>
+      ${rows || `<p class="of-empty">${esc(L.noChanPts)}</p>`}</div>`;
   }
 
   onHover(p) {
@@ -685,9 +808,10 @@ class Panel {
     $(".dl-a", ofW).innerHTML = ofBar ? `${t("delta")} <b style="color:${ofBar.delta >= 0 ? pal.up : pal.down}">${fmtVol(ofBar.delta)}</b>` : t("delta");
     $(".dl-b", ofW).innerHTML = ofBar ? `${t("cvd")} <b style="color:${pal.accent}">${fmtVol(ofBar.cvd)}</b>` : t("cvd");
     const m = r?.chan && r.chan.macd[logical != null && logical >= 0 ? Math.min(logical, r.chan.macd.length - 1) : r.chan.macd.length - 1];
-    const dp = this.prec ?? 2;
-    $(".dl-a", chanW).innerHTML = m ? `${t("macd")} <b style="color:${m.hist >= 0 ? pal.up : pal.down}">${fmtNum(m.hist, dp)}</b>` : t("macd");
-    $(".dl-b", chanW).innerHTML = m ? `DIF <b style="color:${pal.accent}">${fmtNum(m.dif, dp)}</b> DEA <b style="color:${pal.vwap}">${fmtNum(m.dea, dp)}</b>` : "";
+    $(".dl-a", chanW).innerHTML = m ? `${t("macd")} <b style="color:${m.hist >= 0 ? pal.up : pal.down}">${fmtSig(m.hist)}</b>` : t("macd");
+    const divNote = $(".dl-b", chanW).dataset.div;
+    $(".dl-b", chanW).innerHTML = (m ? `DIF <b style="color:${pal.accent}">${fmtSig(m.dif)}</b> DEA <b style="color:${pal.vwap}">${fmtSig(m.dea)}</b>` : "") +
+      (divNote && r?.chan ? ` <span class="div-note">${esc(divNote)}</span>` : "");
   }
 
   renderQuote() {
