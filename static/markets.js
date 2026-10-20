@@ -126,6 +126,21 @@ async function yahooData(sym, interval) {
   return r.json();
 }
 
+// ---------- trade journal (paper orders kept in this browser; rules in journal.js) ----------
+const JOURNAL_KEY = "mc.journal";
+const journal = { orders: load(JOURNAL_KEY, []), filter: load("mc.journal.filter", "all"), timer: null };
+// Ticks change open orders many times a second: save and redraw at most once a second.
+function journalChanged() {
+  if (journal.timer) return;
+  journal.timer = setTimeout(() => { journal.timer = null; save(JOURNAL_KEY, journal.orders); renderJournal(); }, 1000);
+}
+function journalFlush() {
+  if (!journal.timer) return;
+  clearTimeout(journal.timer);
+  journal.timer = null;
+  save(JOURNAL_KEY, journal.orders);
+}
+
 // ---------- panel ----------
 class Panel {
   constructor(group) {
@@ -282,6 +297,7 @@ class Panel {
     this.quote = null;
     this.bars = null;
     this.res = null;
+    this.marketClosed = false;
     this.status("connecting");
     $(".q-name", this.el).textContent = labelOf(s);
     try {
@@ -355,6 +371,7 @@ class Panel {
     this.quote = { price: d.price, ref: d.prev_close, refLabel: t("vs")["1d"], currency: d.currency };
     this.renderQuote();
     const ageMin = (Date.now() / 1000 - d.market_time) / 60;
+    this.marketClosed = !d.delayed_min && ageMin > 20; // no paper orders on a stale price
     if (d.delayed_min) this.status("delayed", d.delayed_min);
     else if (ageMin > 20) this.status("closed", d.market_time);
     else this.status("polling");
@@ -373,6 +390,7 @@ class Panel {
     this.candles.setData(bars.map((b) => ({ time: chartTime(b.time, iv), open: b.open, high: b.high, low: b.low, close: b.close })));
     this.volume.setData(bars.map((b) => ({ time: chartTime(b.time, iv), value: b.volume, color: alpha(b.close >= b.open ? p.up : p.down, 0.33) })));
     if (range) this.chart.timeScale().setVisibleLogicalRange(range);
+    this.trackHistory();
     this.runAnalysis();
   }
 
@@ -380,6 +398,7 @@ class Panel {
     if (!this.bars) return;
     const last = this.bars.at(-1);
     if (last && b.time < last.time) return;
+    this.trackTick(b, last && b.time === last.time ? last : null);
     if (last && b.time === last.time) this.bars[this.bars.length - 1] = b;
     else this.bars.push(b);
     const iv = state.interval;
@@ -389,6 +408,50 @@ class Panel {
     if (this.quote) { this.quote.price = b.close; this.renderQuote(); }
     if (closed) this.runAnalysis();
     else if (!this.analysisTimer) this.analysisTimer = setTimeout(() => { this.analysisTimer = null; this.runAnalysis(); }, ANALYSIS_THROTTLE_MS);
+  }
+
+  // ----- trade journal -----
+  activeOrders() { return journal.orders.filter((o) => o.sym === this.sym.id && Journal.isActive(o)); }
+
+  // After (re)loading history: replay the bars that closed while the page was away.
+  trackHistory() {
+    const act = this.activeOrders();
+    if (!act.length) return;
+    for (const o of act) {
+      for (const b of this.bars) if (b.time * 1000 > o.seen && Journal.isActive(o)) Journal.onPrice(o, b, b.time * 1000);
+    }
+    const c = this.bars.at(-1).close;
+    act.forEach((o) => Journal.onPrice(o, { high: c, low: c, close: c }));
+    journalChanged();
+  }
+
+  // Live update: only the part of the bar's range that is new since the previous update counts.
+  trackTick(b, prev) {
+    const act = this.activeOrders();
+    if (!act.length) return;
+    const high = !prev || b.high > prev.high ? Math.max(b.high, b.close) : b.close;
+    const low = !prev || b.low < prev.low ? Math.min(b.low, b.close) : b.close;
+    act.forEach((o) => Journal.onPrice(o, { high, low, close: b.close }));
+    journalChanged();
+  }
+
+  journalSignal(c) {
+    if (this.marketClosed || !this.bars?.length) return;
+    const s = this.sym;
+    const o = Journal.onSignal(journal.orders, {
+      key: `${s.id}|${state.interval}`, sym: s.id, label: s.label, group: this.g.key, interval: state.interval,
+      theories: THEORIES.filter(on), bias: c.bias, confidence: c.confidence, price: c.price,
+      entry: c.entry, stop: c.stop, targets: c.targets, rr: c.rr, barTime: this.bars.at(-1).time,
+    });
+    if (o) { journalChanged(); journalFlush(); renderJournal(); }
+  }
+
+  barIndexAt(sec) {
+    const n = this.bars.length;
+    if (!n || sec < this.bars[0].time) return -1;
+    let lo = 0, hi = n - 1;
+    while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (this.bars[mid].time <= sec) lo = mid; else hi = mid - 1; }
+    return lo;
   }
 
   // ----- analysis -----
@@ -420,6 +483,7 @@ class Panel {
       });
     }
     this.res = res;
+    if (res.combined) this.journalSignal(res.combined);
     this.drawSeries();
     this.drawPriceLines();
     this.drawMarkers();
@@ -669,8 +733,7 @@ class Panel {
       if (!m || m.level !== "high") continue;
       const ts = etToEpoch(e.date, e.time_et);
       if (ts < first || ts >= end || ts > now) continue;
-      let lo = 0, hi = n - 1;
-      while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (this.bars[mid].time <= ts) lo = mid; else hi = mid - 1; }
+      const lo = this.barIndexAt(ts);
       const key = timeKey(chartTime(this.bars[lo].time, iv));
       if (this.eventAt.has(key)) { this.eventAt.get(key).push(e); continue; }
       this.eventAt.set(key, [e]);
@@ -704,6 +767,17 @@ class Panel {
       for (const pt of r.pa.patterns.filter((x) => x.idx >= n - PA_PATTERN_BARS && x.dir !== 0 && x.zone)) {
         mk(pt.idx, { position: pt.dir > 0 ? "belowBar" : "aboveBar", color: pt.dir > 0 ? p.up : p.down, shape: "square", size: 0.5, text: L.pat[pt.name] });
       }
+    }
+    // Paper orders from the trade log for this symbol and interval: fill and exit.
+    const J = L.J;
+    for (const o of journal.orders) {
+      if (o.sym !== this.sym.id || o.interval !== iv || o.filledAt == null) continue;
+      const buy = o.side === "buy";
+      const i = this.barIndexAt(o.filledAt / 1000);
+      if (i >= 0) mk(i, { position: buy ? "belowBar" : "aboveBar", color: p.accent, shape: buy ? "arrowUp" : "arrowDown", text: `${J.mkOpen[o.side]} ${o.confidence}%` });
+      const k = o.exitAt != null && o.status === "closed" ? this.barIndexAt(o.exitAt / 1000) : -1;
+      if (k >= 0) mk(k, { position: buy ? "aboveBar" : "belowBar", color: o.pnlPct >= 0 ? "#10b981" : "#ef4444", shape: "square", size: 0.8,
+                          text: `${J.mkExit[o.exitReason] || ""} ${fmtPct(o.pnlPct)}` });
     }
     markers.sort((a, b) => a.raw - b.raw);
     this.candles.setMarkers(markers.map(({ raw, ...m }) => m));
@@ -874,6 +948,95 @@ async function loadEvents() {
   panels.forEach((p) => { p.drawMarkers(); p.renderUpcoming(); });
 }
 
+const jLabel = (o) => (typeof o.label === "string" ? o.label : o.label?.[state.lang] ?? o.sym);
+const jStatus = (o) => (o.status === "pending" || o.status === "open" ? o.status : o.status === "cancelled" && o.exitReason !== "expired" ? "cancelled" : o.exitReason);
+
+function renderJournal() {
+  const box = $("#journal");
+  if (!box) return;
+  const L = I18N[state.lang], J = L.J;
+  const st = Journal.stats(journal.orders);
+  const shown = journal.orders.filter((o) => journal.filter === "all" || (journal.filter === "active") === Journal.isActive(o))
+    .slice().reverse().slice(0, 200);
+  const when = (ms) => new Date(ms).toLocaleString(LOCALE(), { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  const px = (x) => (x == null ? "–" : fmtNum(x, precisionFor(x)));
+  const pct = (x) => (x == null ? "–" : fmtPct(x));
+  const tone = (x) => (x == null || x === 0 ? "" : x > 0 ? "pos" : "neg");
+  const tile = (label, value, sub = "", cls = "") => `<div class="j-stat"><span>${esc(label)}</span><b class="${cls}">${value}</b>${sub ? `<small>${esc(sub)}</small>` : ""}</div>`;
+  const pf = st.profitFactor == null ? "–" : st.profitFactor === Infinity ? "∞" : st.profitFactor.toFixed(2);
+  const rows = shown.map((o) => {
+    const status = jStatus(o), out = Journal.outcome(o), live = Journal.unrealized(o);
+    const pnl = o.status === "closed" ? o.pnlPct : live;
+    return `<tr class="${Journal.isActive(o) ? "active" : ""}">
+      <td class="j-when">${esc(when(o.placedAt))}</td>
+      <td><button class="j-mkt" data-group="${esc(o.group)}" data-sym="${esc(o.sym)}">${esc(jLabel(o))}</button>
+        <small>${esc(o.interval === "1d" ? "1D" : o.interval)} · ${esc(o.theories.map((th) => L.theoryShort[th]).join("+"))}</small></td>
+      <td><span class="j-side ${o.side}">${esc(L.bias[o.side])}</span></td>
+      <td class="num">${o.confidence}%</td>
+      <td class="num">${px(o.fill ?? o.entry)}<small>${esc(J[o.type])}</small></td>
+      <td class="num neg">${px(o.stop)}</td>
+      <td class="num pos">${px(o.target)}</td>
+      <td class="num">${o.status === "closed" ? px(o.exitPrice) : o.status === "open" ? `<span class="j-last">${px(o.last)}</span>` : "–"}</td>
+      <td><span class="j-status ${status}">${esc(J.status[status])}</span>${out ? ` <span class="j-out ${out}">${esc(J.outcome[out])}</span>` : ""}</td>
+      <td class="num ${tone(pnl)}">${pct(pnl)}${o.status === "closed" && o.r != null ? `<small>${o.r >= 0 ? "+" : "−"}${Math.abs(o.r).toFixed(2)}R</small>` : ""}</td>
+      <td>${Journal.isActive(o) ? `<button class="btn ghost j-close" data-id="${esc(o.id)}" title="${esc(J.closeTitle)}">${esc(J.close)}</button>` : ""}</td>
+    </tr>`;
+  }).join("");
+  box.innerHTML = `
+    <div class="j-head">
+      <div><h2>${esc(J.title)}</h2><p class="j-sub">${esc(J.sub(Journal.MIN_CONF))}</p></div>
+      <div class="j-actions">
+        <div class="view-toggle" role="group">${["all", "active", "done"].map((f) => `<button class="seg ${journal.filter === f ? "on" : ""}" data-jf="${f}">${esc(J[f])}</button>`).join("")}</div>
+        <button class="btn ghost" id="jCsv" ${journal.orders.length ? "" : "disabled"}>${esc(J.csv)}</button>
+        <button class="btn ghost" id="jClear" ${journal.orders.length ? "" : "disabled"}>${esc(J.clear)}</button>
+      </div>
+    </div>
+    <div class="j-stats">
+      ${tile(J.stats.orders, st.total, J.openN(st.open, st.pending))}
+      ${tile(J.stats.winRate, st.winRate == null ? "–" : `${Math.round(st.winRate * 100)}%`, J.wl(st.wins, st.losses))}
+      ${tile(J.stats.pnl, pct(st.closed ? st.totalPct : null), J.sumNote, tone(st.totalPct))}
+      ${tile(J.stats.avgR, st.avgR == null ? "–" : `${st.avgR >= 0 ? "+" : "−"}${Math.abs(st.avgR).toFixed(2)}R`, "", tone(st.avgR))}
+      ${tile(J.stats.pf, pf)}
+      ${tile(J.stats.open, pct(st.open ? st.openPct : null), "", tone(st.openPct))}
+    </div>
+    ${rows ? `<div class="j-table"><table>
+      <thead><tr>${["time", "market", "side", "conf", "entry", "stop", "target", "exit", "status", "pnl"].map((k) => `<th>${esc(J.cols[k])}</th>`).join("")}<th></th></tr></thead>
+      <tbody>${rows}</tbody></table></div>` : `<p class="of-empty">${esc(journal.orders.length ? J.noneHere : J.empty)}</p>`}`;
+
+  box.querySelectorAll("[data-jf]").forEach((b) => { b.onclick = () => { journal.filter = b.dataset.jf; save("mc.journal.filter", journal.filter); renderJournal(); }; });
+  box.querySelectorAll(".j-close").forEach((b) => {
+    b.onclick = () => {
+      const o = journal.orders.find((x) => x.id === b.dataset.id);
+      if (!o || !Journal.isActive(o)) return;
+      Journal.closeOrder(o, o.last, "manual", Date.now());
+      journalChanged(); journalFlush(); renderJournal();
+      panels.forEach((p) => p.drawMarkers());
+    };
+  });
+  box.querySelectorAll(".j-mkt").forEach((b) => {
+    b.onclick = () => {
+      const p = panels.find((x) => x.g.key === b.dataset.group);
+      if (!p) return;
+      if (p.symbols.some((x) => x.id === b.dataset.sym) && p.sym.id !== b.dataset.sym) p.select(b.dataset.sym);
+      p.el.scrollIntoView({ behavior: "smooth", block: "start" });
+    };
+  });
+  const csv = $("#jCsv", box);
+  csv.onclick = () => {
+    const url = URL.createObjectURL(new Blob([Journal.toCsv(journal.orders)], { type: "text/csv" }));
+    const a = Object.assign(document.createElement("a"), { href: url, download: `trade-log-${new Date().toISOString().slice(0, 10)}.csv` });
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+  $("#jClear", box).onclick = () => {
+    if (!confirm(J.confirmClear)) return;
+    journal.orders = [];
+    save(JOURNAL_KEY, journal.orders);
+    renderJournal();
+    panels.forEach((p) => p.drawMarkers());
+  };
+}
+
 function applyStaticText() {
   document.documentElement.lang = state.lang === "zh" ? "zh-CN" : "en";
   document.title = t("title");
@@ -894,6 +1057,7 @@ function build() {
   panels = GROUPS.map((g) => new Panel(g));
   panels.forEach((p) => p.start());
   loadEvents();
+  renderJournal();
 }
 
 document.querySelectorAll(".lang-toggle .seg").forEach((b) => {
@@ -932,8 +1096,19 @@ document.querySelectorAll("[data-theory]").forEach((b) => {
   };
 });
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => panels.forEach((p) => p.applyTheme()));
-document.addEventListener("visibilitychange", () => { if (!document.hidden) panels.filter((p) => p.timer).forEach((p) => p.start()); });
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) journalFlush();
+  else panels.filter((p) => p.timer).forEach((p) => p.start());
+});
+window.addEventListener("pagehide", journalFlush);
+// Another tab changed the log: adopt its copy.
+window.addEventListener("storage", (e) => {
+  if (e.key !== JOURNAL_KEY) return;
+  journal.orders = load(JOURNAL_KEY, []);
+  renderJournal();
+  panels.forEach((p) => p.drawMarkers());
+});
 
 applyStaticText();
-if (window.LightweightCharts && window.OrderFlow && window.Chan && window.PriceAction && window.Combine) build();
+if (window.LightweightCharts && window.OrderFlow && window.Chan && window.PriceAction && window.Combine && window.Journal) build();
 else $("#panels").innerHTML = `<div class="warn">Chart library failed to load.</div>`;
