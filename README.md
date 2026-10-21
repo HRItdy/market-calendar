@@ -18,7 +18,14 @@ Tests: `pip install -r requirements-dev.txt && pytest`, and `node --test tests/j
 2. On [render.com](https://render.com): **New → Blueprint**, select the repo. Render reads `render.yaml` and builds the `Dockerfile`.
 3. The public URL is `https://market-calendar-xxxx.onrender.com`.
 
-The public copy runs with `MC_READ_ONLY=1`, so visitors can browse but not add or delete events. The Dockerfile works on any container host (Fly.io, Railway, Cloud Run).
+The public copy runs with `MC_READ_ONLY=1`, so visitors can browse but not add or delete events.
+
+**Trade log settings** (Render → service → Environment):
+
+| Variable | Purpose |
+|---|---|
+| `MC_JOURNAL_KEY` | Any long secret. The page asks for it once per device; without it the log can't be read or changed. On a read-only deployment the log is off until this is set. |
+| `DATABASE_URL` | A Postgres connection string (e.g. a free [Neon](https://neon.tech) database). Render's free web service loses its disk on every restart, so without this the log is temporary (the page warns about it). Locally the log uses `app/data/journal.db` (SQLite); `MC_JOURNAL_DB` points it at another file. | The Dockerfile works on any container host (Fly.io, Railway, Cloud Run).
 
 ## Features
 
@@ -32,7 +39,7 @@ The public copy runs with `MC_READ_ONLY=1`, so visitors can browse but not add o
   - **Chan Lun 缠论**: inclusion processing (包含), fractals (分型), strokes (笔), segments (线段, simplified feature-sequence rule), pivots (中枢 boxes with ZG/ZD), MACD pane, trend divergence (背驰), and first/second/third-type buy & sell points (一/二/三买卖点). First- and second-type points are drawn with their invalidation level, the 1B→2B "higher low" link, and the 背驰 evidence (entering vs leaving stroke highlighted on the chart, their MACD areas shaded in the MACD pane). Points still forming on the current move are shown with "?" at reduced weight. A list under the chart shows every point with its status (forming / unconfirmed / confirmed / broken, using Chan invalidation rules: 2B by its 1B, 3B by re-entering the pivot); click a row to jump to it.
   - **Price action**: swing structure (HH/HL/LH/LL), BOS and CHoCH, support/resistance zones from swing clusters, 20 EMA, and pin / engulfing / inside-bar signals at those zones.
   - **Combined read**: each theory scores the market from −1 to +1 and leans BUY or SELL at ±0.4. If the selected theories lean opposite ways, the read is **WAIT** (conflict). Otherwise the average decides (±0.35). The plan uses the nearest supporting level for entry, the tightest structural stop from the agreeing theories, and targets from all theories' levels that pay at least 1R. Confidence is capped by how many theories agree (one 75%, two 85%, three 90%), and reduced for estimated delta or delayed data.
-- **Trade log** (paper trading, below the charts): whenever the combined read is **BUY or SELL with confidence above 50%**, a **Place order** button appears under the read; click it and the order is recorded, then followed live to see whether it made or lost money. One order per symbol and timeframe. Entries are at market, or a limit at the plan's entry level (cancelled if unfilled after 20 bars). Each order exits at its stop or Target 1 (if one bar touches both, the stop is counted), or reverses on an opposite signal. The log shows win rate, closed P&L, average R, profit factor and open P&L, marks fills and exits on the chart, and exports to CSV. Open orders are tracked while the page is open (missed bars are replayed when you come back), and the log is kept in that browser's localStorage. Rules are in `static/journal.js`.
+- **Trade log** (paper trading, below the charts): whenever the combined read is **BUY or SELL with confidence above 50%**, a **Place order** button appears under the read; click it and the order is recorded, then followed live to see whether it made or lost money. One order per symbol and timeframe. Entries are at market, or a limit at the plan's entry level (cancelled if unfilled after 20 bars). Each order exits at its stop or Target 1 (if one bar touches both, the stop is counted), or reverses on an opposite signal. The log shows win rate, closed P&L, average R, profit factor and open P&L, marks fills and exits on the chart, and exports to CSV. The log is **saved on the server and shared across devices**: the server tracks open orders every 30s on 1-minute candles (Binance for crypto, Yahoo for the rest) even with no page open, and replays missed candles after the free instance wakes up. It is private to whoever has the log key. Rules are in `app/journal.py`.
 - **Context notes**: flags data released during the Fed's pre-meeting blackout, days with several high-impact events, and releases that happen while the market is closed.
 - **Custom events**: add your own events (e.g. a stock you hold reporting earnings) and reuse a built-in impact template.
 - **Calendar export**: `/api/calendar.ics` works with Google, Apple and Outlook calendars.
@@ -69,6 +76,11 @@ Typical-move figures are rough post-2020 historical tendencies. **They are not f
 | `POST /api/custom-events` | `{date, title, time_et?, importance?, template?, description?, impact_notes?}` |
 | `DELETE /api/custom-events/{id}` | Remove a custom event |
 | `GET /api/kline?symbol=GC=F&interval=5m` | OHLC candles (`1m`, `5m`, `15m`, `1h`, `1d`) |
+| `GET /api/journal` | Trade log orders (header `X-Journal-Key` when `MC_JOURNAL_KEY` is set, for all `/api/journal` calls) |
+| `POST /api/journal/orders` | Place an order from a read: `{sym, label, group, interval, theories, bias, confidence, price, entry, stop, targets, rr, barTime, feed}` |
+| `POST /api/journal/orders/{id}/close` | Close at `{price}` (or the last tracked price) |
+| `POST /api/journal/import` | Bulk-add orders saved in a browser before the log moved to the server |
+| `DELETE /api/journal` | Clear the log |
 | `GET /api/calendar.ics?importance=high&importance=medium` | iCalendar feed |
 
 Interactive docs are at `/docs`.
@@ -85,7 +97,9 @@ static/orderflow.js  Order-flow engine: delta/CVD, VWAP, volume profile, signals
 static/chan.js       Chan Lun engine: 包含/分型/笔/线段/中枢/背驰/买卖点
 static/pa.js         Price-action engine: swings, BOS/CHoCH, S/R zones, EMA, signal bars
 static/combine.js    Merges the selected theories into one read and trade plan
-static/journal.js    Paper-trade log: places orders on >50% reads, tracks stop/target outcomes
+static/journal.js    Trade log summary helpers (win rate, P&L, CSV)
+app/journal.py    Trade log rules and the server-side price tracker
+app/journal_store.py  Trade log storage: Postgres (DATABASE_URL) or SQLite
 app/events.py     Event generation, cross-event annotations, risk score
 app/main.py       FastAPI routes
 static/           Frontend (vanilla JS, no build step)

@@ -2,3 +2,4 @@ __pycache__/
 .pytest_cache/
 .venv/
 app/data/custom_events.json
+app/data/journal.db

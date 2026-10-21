@@ -1,17 +1,21 @@
 """US Market Events Calendar — FastAPI service."""
 from __future__ import annotations
 
+import asyncio
+import hmac
 import os
+from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import events as E
+from . import journal as J
 from . import quotes as Q
 from .impact import PROFILES, profile
 
@@ -21,8 +25,27 @@ STATIC = Path(__file__).resolve().parent.parent / "static"
 MAX_RANGE_DAYS = 800
 # Public deployments set MC_READ_ONLY=1 so visitors can't add or delete events.
 READ_ONLY = os.environ.get("MC_READ_ONLY", "").lower() in ("1", "true", "yes")
+# The trade log is private to whoever holds this key (entered once per device in the page).
+JOURNAL_KEY = os.environ.get("MC_JOURNAL_KEY", "").strip()
 
-app = FastAPI(title="US Market Events Calendar", version="1.0.0")
+
+async def _track_journal():
+    while True:
+        try:
+            await asyncio.to_thread(J.track_once)
+        except Exception as exc:  # never let the tracker die
+            J.log.warning("journal tracker: %s", exc)
+        await asyncio.sleep(J.TRACK_SEC)
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    task = asyncio.create_task(_track_journal())
+    yield
+    task.cancel()
+
+
+app = FastAPI(title="US Market Events Calendar", version="1.0.0", lifespan=lifespan)
 
 
 def _range(start: date | None, end: date | None) -> tuple[date, date]:
@@ -169,6 +192,94 @@ def kline(symbol: str = Query(..., max_length=16), interval: Literal["1m", "5m",
     except Q.QuoteError as exc:
         msg = str(exc)
         raise HTTPException(400 if msg.startswith("invalid") or msg == "unknown symbol" else 502, msg)
+
+
+# ---------- trade log ----------
+def _journal_auth(key: str | None) -> None:
+    if JOURNAL_KEY:
+        if not key or not hmac.compare_digest(key.encode(), JOURNAL_KEY.encode()):
+            raise HTTPException(401, "journal key required")
+    elif READ_ONLY:
+        raise HTTPException(403, "the trade log is disabled: set MC_JOURNAL_KEY on the server")
+
+
+def _journal_info() -> dict:
+    s = J.store()
+    return {"persistent": s.persistent, "storage": s.kind, "min_conf": J.MIN_CONF, "track_sec": J.TRACK_SEC}
+
+
+Interval = Literal["1m", "5m", "15m", "1h", "1d"]
+
+
+class Feed(BaseModel):
+    src: Literal["binance", "yahoo"]
+    sym: str = Field(pattern=r"^[A-Z0-9^][A-Z0-9.^=\-]{0,19}$")
+    yahoo: str | None = Field(None, pattern=r"^[A-Z0-9^][A-Z0-9.^=\-]{0,15}$")
+
+
+class OrderIn(BaseModel):
+    sym: str = Field(min_length=1, max_length=16)
+    label: str | dict[str, str]
+    group: str = Field(max_length=16)
+    interval: Interval
+    theories: list[Literal["of", "chan", "pa"]] = Field(min_length=1)
+    bias: Literal["buy", "sell"]
+    confidence: int = Field(ge=0, le=100)
+    price: float = Field(gt=0)
+    entry: float = Field(gt=0)
+    stop: float = Field(gt=0)
+    targets: list[float] = Field(min_length=1)
+    rr: float | None = None
+    barTime: int | None = None
+    feed: Feed
+
+
+class CloseIn(BaseModel):
+    price: float | None = Field(None, gt=0)
+
+
+class ImportIn(BaseModel):
+    orders: list[dict] = Field(max_length=1000)
+
+
+@app.get("/api/journal")
+def journal_list(x_journal_key: str | None = Header(None)):
+    _journal_auth(x_journal_key)
+    return {**_journal_info(), "orders": J.store().all()}
+
+
+@app.post("/api/journal/orders", status_code=201)
+def journal_place(order: OrderIn, x_journal_key: str | None = Header(None)):
+    _journal_auth(x_journal_key)
+    try:
+        return J.place(order.model_dump())
+    except J.OrderRejected as exc:
+        raise HTTPException(409, str(exc))
+
+
+@app.post("/api/journal/orders/{order_id}/close")
+def journal_close(order_id: str, body: CloseIn, x_journal_key: str | None = Header(None)):
+    _journal_auth(x_journal_key)
+    o = J.close_manual(order_id, body.price)
+    if o is None:
+        raise HTTPException(404, "not found")
+    return o
+
+
+@app.post("/api/journal/import")
+def journal_import(body: ImportIn, x_journal_key: str | None = Header(None)):
+    _journal_auth(x_journal_key)
+    need = {"id", "sym", "interval", "side", "placedAt", "status", "entry", "stop", "target"}
+    if any(not isinstance(o, dict) or not need <= o.keys() for o in body.orders):
+        raise HTTPException(400, f"each order needs {sorted(need)}")
+    return {"added": J.import_orders(body.orders)}
+
+
+@app.delete("/api/journal", status_code=204)
+def journal_clear(x_journal_key: str | None = Header(None)):
+    _journal_auth(x_journal_key)
+    with J._lock:
+        J.store().clear()
 
 
 @app.get("/markets", include_in_schema=False)

@@ -316,6 +316,11 @@ h2 { font-size: 16px; }
 .j-out { font-size: 11px; font-weight: 700; border-radius: 4px; padding: 0 6px; border: 1px solid currentColor; }
 .j-out.win { color: #16a34a; } .j-out.loss { color: #dc2626; } .j-out.flat { color: var(--muted); }
 .j-close { padding: 3px 10px; font-size: 12px; }
+.j-warn, .j-import { margin: 0 0 10px; padding: 8px 10px; border-radius: 8px; font-size: 12px; border: 1px solid color-mix(in srgb, var(--medium) 50%, var(--line)); background: color-mix(in srgb, var(--medium) 10%, var(--panel)); }
+.j-import { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; border-color: var(--line); background: var(--bg); }
+.j-key { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.j-key p { flex-basis: 100%; margin: 0 0 2px; color: var(--muted); font-size: 13px; }
+.j-key input { font: inherit; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg); color: var(--ink); width: min(280px, 100%); }
 
 /* dialog */
 dialog { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--ink); width: min(480px, calc(100% - 32px)); padding: 20px; box-shadow: var(--shadow); }

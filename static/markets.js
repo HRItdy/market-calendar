@@ -126,19 +126,55 @@ async function yahooData(sym, interval) {
   return r.json();
 }
 
-// ---------- trade journal (paper orders kept in this browser; rules in journal.js) ----------
-const JOURNAL_KEY = "mc.journal";
-const journal = { orders: load(JOURNAL_KEY, []), filter: load("mc.journal.filter", "all"), timer: null };
-// Ticks change open orders many times a second: save and redraw at most once a second.
-function journalChanged() {
-  if (journal.timer) return;
-  journal.timer = setTimeout(() => { journal.timer = null; save(JOURNAL_KEY, journal.orders); renderJournal(); }, 1000);
+// ---------- trade journal (saved on the server, shared by every device with the key; rules in app/journal.py) ----------
+const LOCAL_JOURNAL = "mc.journal"; // log saved in this browser before it moved to the server; offered for upload
+const JOURNAL_POLL_MS = 10_000;
+const journal = { orders: [], info: null, error: null, key: load("mc.journal.key", ""), filter: load("mc.journal.filter", "all") };
+
+async function journalApi(method, path = "", body) {
+  const headers = { "Content-Type": "application/json" };
+  if (journal.key) headers["X-Journal-Key"] = journal.key;
+  const r = await fetch(`/api/journal${path}`, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  if (r.status === 401 || r.status === 403) {
+    journal.error = r.status === 401 ? "auth" : "disabled";
+    journal.orders = [];
+    throw new Error(journal.error);
+  }
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
+  return r.status === 204 ? null : r.json();
 }
-function journalFlush() {
-  if (!journal.timer) return;
-  clearTimeout(journal.timer);
-  journal.timer = null;
-  save(JOURNAL_KEY, journal.orders);
+
+async function journalLoad() {
+  try {
+    const d = await journalApi("GET");
+    journal.orders = d.orders;
+    journal.info = d;
+    journal.error = null;
+  } catch (e) {
+    if (!["auth", "disabled"].includes(journal.error)) journal.error = "net";
+  }
+  journalRefresh();
+}
+
+// Run a change on the server, then reload the log; failures are shown to the user.
+async function journalDo(method, path, body) {
+  try { await journalApi(method, path, body); } catch (e) { if (!["auth", "disabled"].includes(e.message)) alert(e.message); }
+  await journalLoad();
+}
+
+// Where a panel is showing the order's symbol, use its live price for open P&L (the server checks every 30s).
+function livePrice(sym) {
+  const p = panels.find((x) => x.sym.id === sym && x.quote?.price);
+  return p ? p.quote.price : null;
+}
+
+// Feed the server tracks an order with: Binance for crypto (Yahoo as fallback), Yahoo for the rest.
+function feedOf(s) {
+  return s.src === "binance" ? { src: "binance", sym: s.sym, yahoo: s.yahoo ?? null } : { src: "yahoo", sym: s.sym };
+}
+function feedForId(id) {
+  for (const g of GROUPS) { const s = g.symbols.find((x) => x.id === id); if (s) return feedOf(s); }
+  return /^[A-Z0-9^][A-Z0-9.^=-]{0,14}$/.test(id) ? { src: "yahoo", sym: id } : null;
 }
 
 // ---------- panel ----------
@@ -390,7 +426,6 @@ class Panel {
     this.candles.setData(bars.map((b) => ({ time: chartTime(b.time, iv), open: b.open, high: b.high, low: b.low, close: b.close })));
     this.volume.setData(bars.map((b) => ({ time: chartTime(b.time, iv), value: b.volume, color: alpha(b.close >= b.open ? p.up : p.down, 0.33) })));
     if (range) this.chart.timeScale().setVisibleLogicalRange(range);
-    this.trackHistory();
     this.runAnalysis();
   }
 
@@ -398,7 +433,6 @@ class Panel {
     if (!this.bars) return;
     const last = this.bars.at(-1);
     if (last && b.time < last.time) return;
-    this.trackTick(b, last && b.time === last.time ? last : null);
     if (last && b.time === last.time) this.bars[this.bars.length - 1] = b;
     else this.bars.push(b);
     const iv = state.interval;
@@ -411,50 +445,28 @@ class Panel {
   }
 
   // ----- trade journal -----
-  activeOrders() { return journal.orders.filter((o) => o.sym === this.sym.id && Journal.isActive(o)); }
-
-  // After (re)loading history: replay the bars that closed while the page was away.
-  trackHistory() {
-    const act = this.activeOrders();
-    if (!act.length) return;
-    for (const o of act) {
-      for (const b of this.bars) if (b.time * 1000 > o.seen && Journal.isActive(o)) Journal.onPrice(o, b, b.time * 1000);
-    }
-    const c = this.bars.at(-1).close;
-    act.forEach((o) => Journal.onPrice(o, { high: c, low: c, close: c }));
-    journalChanged();
-  }
-
-  // Live update: only the part of the bar's range that is new since the previous update counts.
-  trackTick(b, prev) {
-    const act = this.activeOrders();
-    if (!act.length) return;
-    const high = !prev || b.high > prev.high ? Math.max(b.high, b.close) : b.close;
-    const low = !prev || b.low < prev.low ? Math.min(b.low, b.close) : b.close;
-    act.forEach((o) => Journal.onPrice(o, { high, low, close: b.close }));
-    journalChanged();
-  }
-
   // Order button on the read card: offered only for a BUY/SELL read above the confidence bar.
   orderOffer(c) {
     if (!c || c.bias === "wait") return null;
-    if (!(c.confidence > Journal.MIN_CONF)) return { note: "needConf" };
+    if (!(c.confidence > minConf())) return { note: "needConf" };
+    if (journal.error) return { note: journal.error === "auth" ? "needKey" : journal.error === "disabled" ? "disabled" : "offline" };
     if (this.marketClosed) return { note: "closedMkt" };
     const act = journal.orders.find((o) => o.key === `${this.sym.id}|${state.interval}` && Journal.isActive(o));
     if (act?.side === c.bias) return { note: "alreadyOpen" };
     return { reverse: act?.side ?? null };
   }
 
-  placeOrder() {
+  async placeOrder(btn) {
     const c = this.res?.combined;
-    if (!this.orderOffer(c) || this.orderOffer(c).note || !this.bars?.length) return;
+    const offer = this.orderOffer(c);
+    if (!offer || offer.note || !this.bars?.length) return;
     const s = this.sym;
-    const o = Journal.onSignal(journal.orders, {
-      key: `${s.id}|${state.interval}`, sym: s.id, label: s.label, group: this.g.key, interval: state.interval,
+    btn.disabled = true;
+    await journalDo("POST", "/orders", {
+      sym: s.id, label: s.label, group: this.g.key, interval: state.interval,
       theories: THEORIES.filter(on), bias: c.bias, confidence: c.confidence, price: c.price,
-      entry: c.entry, stop: c.stop, targets: c.targets, rr: c.rr, barTime: this.bars.at(-1).time,
+      entry: c.entry, stop: c.stop, targets: c.targets, rr: c.rr, barTime: this.bars.at(-1).time, feed: feedOf(s),
     });
-    if (o) { journalChanged(); journalFlush(); journalRefresh(); }
   }
 
   barIndexAt(sec) {
@@ -840,7 +852,7 @@ class Panel {
       ${notes.length ? `<p class="of-note">${notes.map(esc).join(" · ")}</p>` : ""}
       ${r.chan ? this.chanListHtml() : ""}`;
     const ob = $(".order-btn", card);
-    if (ob) ob.onclick = () => this.placeOrder();
+    if (ob) ob.onclick = () => this.placeOrder(ob);
     card.querySelectorAll(".pt-row").forEach((row) => {
       row.onclick = () => {
         const i = +row.dataset.idx;
@@ -852,7 +864,7 @@ class Panel {
   orderHtml(c) {
     const offer = this.orderOffer(c), J = I18N[state.lang].J;
     if (!offer) return "";
-    if (offer.note) return `<p class="order-note">${esc(J[offer.note](Journal.MIN_CONF, c.bias))}</p>`;
+    if (offer.note) return `<p class="order-note">${esc(J[offer.note](minConf(), c.bias))}</p>`;
     return `<button class="btn order-btn ${c.bias}">${esc(J.placeBtn[c.bias])}</button>` +
       (offer.reverse ? `<p class="order-note">${esc(J.reverseNote[offer.reverse])}</p>` : "");
   }
@@ -977,12 +989,35 @@ function journalRefresh() {
   panels.forEach((p) => { p.drawMarkers(); p.renderAnalysis(); });
 }
 
+const minConf = () => journal.info?.min_conf ?? Journal.MIN_CONF;
+
+function journalKeyForm(J, msg) {
+  return `<form class="j-key"><p>${esc(msg)}</p>
+    <input type="password" autocomplete="current-password" placeholder="${esc(J.keyPh)}" aria-label="${esc(J.keyPh)}" />
+    <button class="btn">${esc(J.keySave)}</button></form>`;
+}
+
 function renderJournal() {
   const box = $("#journal");
   if (!box) return;
   const L = I18N[state.lang], J = L.J;
-  const st = Journal.stats(journal.orders);
-  const shown = journal.orders.filter((o) => journal.filter === "all" || (journal.filter === "active") === Journal.isActive(o))
+  if (journal.error === "auth" || journal.error === "disabled") {
+    box.innerHTML = `<div class="j-head"><div><h2>${esc(J.title)}</h2><p class="j-sub">${esc(J.sub(minConf()))}</p></div></div>` +
+      (journal.error === "disabled" ? `<p class="j-warn">${esc(J.disabledMsg)}</p>` : journalKeyForm(J, journal.key ? J.keyWrong : J.keyNeeded));
+    const form = $(".j-key", box);
+    if (form) form.onsubmit = (ev) => {
+      ev.preventDefault();
+      journal.key = form.querySelector("input").value.trim();
+      save("mc.journal.key", journal.key);
+      journalLoad();
+    };
+    return;
+  }
+  // Open orders show the live chart price when that symbol is on screen.
+  const view = journal.orders.map((o) => { const lp = o.status === "open" && livePrice(o.sym); return lp ? { ...o, last: lp } : o; });
+  const st = Journal.stats(view);
+  const local = load(LOCAL_JOURNAL, []);
+  const shown = view.filter((o) => journal.filter === "all" || (journal.filter === "active") === Journal.isActive(o))
     .slice().reverse().slice(0, 200);
   const when = (ms) => new Date(ms).toLocaleString(LOCALE(), { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
   const px = (x) => (x == null ? "–" : fmtNum(x, precisionFor(x)));
@@ -1010,13 +1045,17 @@ function renderJournal() {
   }).join("");
   box.innerHTML = `
     <div class="j-head">
-      <div><h2>${esc(J.title)}</h2><p class="j-sub">${esc(J.sub(Journal.MIN_CONF))}</p></div>
+      <div><h2>${esc(J.title)}</h2><p class="j-sub">${esc(J.sub(minConf()))}</p></div>
       <div class="j-actions">
         <div class="view-toggle" role="group">${["all", "active", "done"].map((f) => `<button class="seg ${journal.filter === f ? "on" : ""}" data-jf="${f}">${esc(J[f])}</button>`).join("")}</div>
         <button class="btn ghost" id="jCsv" ${journal.orders.length ? "" : "disabled"}>${esc(J.csv)}</button>
         <button class="btn ghost" id="jClear" ${journal.orders.length ? "" : "disabled"}>${esc(J.clear)}</button>
+        ${journal.key ? `<button class="btn ghost" id="jForget" title="${esc(J.forgetTitle)}">${esc(J.forget)}</button>` : ""}
       </div>
     </div>
+    ${journal.error === "net" ? `<p class="j-warn">${esc(J.offlineMsg)}</p>` : ""}
+    ${journal.info && !journal.info.persistent ? `<p class="j-warn">${esc(J.tempMsg)}</p>` : ""}
+    ${local.length && journal.info ? `<p class="j-import">${esc(J.importMsg(local.length))} <button class="btn ghost" id="jImport">${esc(J.importBtn)}</button></p>` : ""}
     <div class="j-stats">
       ${tile(J.stats.orders, st.total, J.openN(st.open, st.pending))}
       ${tile(J.stats.winRate, st.winRate == null ? "–" : `${Math.round(st.winRate * 100)}%`, J.wl(st.wins, st.losses))}
@@ -1034,8 +1073,8 @@ function renderJournal() {
     b.onclick = () => {
       const o = journal.orders.find((x) => x.id === b.dataset.id);
       if (!o || !Journal.isActive(o)) return;
-      Journal.closeOrder(o, o.last, "manual", Date.now());
-      journalChanged(); journalFlush(); journalRefresh();
+      b.disabled = true;
+      journalDo("POST", `/orders/${encodeURIComponent(o.id)}/close`, { price: livePrice(o.sym) });
     };
   });
   box.querySelectorAll(".j-mkt").forEach((b) => {
@@ -1055,9 +1094,24 @@ function renderJournal() {
   };
   $("#jClear", box).onclick = () => {
     if (!confirm(J.confirmClear)) return;
-    journal.orders = [];
-    save(JOURNAL_KEY, journal.orders);
-    journalRefresh();
+    journalDo("DELETE", "");
+  };
+  const forget = $("#jForget", box);
+  if (forget) forget.onclick = () => {
+    journal.key = "";
+    save("mc.journal.key", "");
+    journalLoad();
+  };
+  const imp = $("#jImport", box);
+  if (imp) imp.onclick = async () => {
+    imp.disabled = true;
+    const orders = local.map((o) => ({ ...o, feed: o.feed ?? feedForId(o.sym) }));
+    try {
+      const r = await journalApi("POST", "/import", { orders });
+      try { localStorage.removeItem(LOCAL_JOURNAL); } catch { /* storage unavailable */ }
+      alert(J.imported(r.added));
+    } catch (e) { if (!["auth", "disabled"].includes(e.message)) alert(e.message); }
+    journalLoad();
   };
 }
 
@@ -1081,7 +1135,7 @@ function build() {
   panels = GROUPS.map((g) => new Panel(g));
   panels.forEach((p) => p.start());
   loadEvents();
-  renderJournal();
+  journalLoad();
 }
 
 document.querySelectorAll(".lang-toggle .seg").forEach((b) => {
@@ -1121,16 +1175,12 @@ document.querySelectorAll("[data-theory]").forEach((b) => {
 });
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => panels.forEach((p) => p.applyTheme()));
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden) journalFlush();
-  else panels.filter((p) => p.timer).forEach((p) => p.start());
+  if (document.hidden) return;
+  panels.filter((p) => p.timer).forEach((p) => p.start());
+  journalLoad();
 });
-window.addEventListener("pagehide", journalFlush);
-// Another tab changed the log: adopt its copy.
-window.addEventListener("storage", (e) => {
-  if (e.key !== JOURNAL_KEY) return;
-  journal.orders = load(JOURNAL_KEY, []);
-  journalRefresh();
-});
+// Orders placed on other devices, and outcomes the server's tracker decides, show up here.
+setInterval(() => { if (!document.hidden) journalLoad(); }, JOURNAL_POLL_MS);
 
 applyStaticText();
 if (window.LightweightCharts && window.OrderFlow && window.Chan && window.PriceAction && window.Combine && window.Journal) build();

@@ -7,3 +7,8 @@ services:
     envVars:
       - key: MC_READ_ONLY
         value: "1"
+      # Trade log: the key unlocks it in the page; DATABASE_URL (any Postgres) keeps it across restarts.
+      - key: MC_JOURNAL_KEY
+        sync: false
+      - key: DATABASE_URL
+        sync: false
