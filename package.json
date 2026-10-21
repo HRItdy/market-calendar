@@ -1,0 +1,11 @@
+{
+  "private": true,
+  "scripts": {
+    "dev": "neon-env run -- python3 -m uvicorn app.main:app --reload --port 8000",
+    "test": "python3 -m pytest -q && node --test tests/js/*.cjs"
+  },
+  "dependencies": {
+    "@neon/config": "^1.9.3",
+    "@neon/env": "^1.6.4"
+  }
+}

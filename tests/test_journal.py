@@ -1,6 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
+from app import backups as B
 from app import journal as J
 from app import journal_store
 from app import main
@@ -11,6 +12,8 @@ client = TestClient(main.app)
 
 @pytest.fixture(autouse=True)
 def fresh_store(tmp_path, monkeypatch):
+    for k in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_ENDPOINT_URL_S3"):
+        monkeypatch.delenv(k, raising=False)  # unit tests never touch the real bucket
     J.set_store(journal_store.SqliteStore(tmp_path / "j.db"))
     monkeypatch.setattr(main, "JOURNAL_KEY", "")
     monkeypatch.setattr(main, "READ_ONLY", False)
@@ -123,3 +126,31 @@ def test_api_flow_and_auth(monkeypatch):
     monkeypatch.setattr(main, "JOURNAL_KEY", "")
     monkeypatch.setattr(main, "READ_ONLY", True)  # public site without a key: log disabled
     assert client.get("/api/journal").status_code == 403
+
+
+def test_tracker_skips_the_database_while_nothing_is_active(monkeypatch):
+    calls = []
+    real_active = J.store().active
+    monkeypatch.setattr(J.store(), "active", lambda: calls.append(1) or real_active())
+    assert J.track_once(lambda f, s: []) == 0 and J.track_once(lambda f, s: []) == 0
+    assert len(calls) == 1  # second round skipped: no orders exist
+    J.place(sig(), T0)
+    before = len(calls)
+    J.track_once(lambda f, s: [])
+    assert len(calls) == before + 1  # a new order wakes the tracker up
+
+
+def test_clear_snapshots_the_log_first(monkeypatch):
+    saved = []
+    monkeypatch.setattr(B, "save", lambda orders, reason: saved.append((len(orders), reason)) or "k")
+    client.post("/api/journal/orders", json=sig())
+    assert client.delete("/api/journal").status_code == 204
+    assert saved == [(1, "before-clear")]
+
+    def fail(orders, reason):
+        raise OSError("bucket down")
+
+    client.post("/api/journal/orders", json=sig())
+    monkeypatch.setattr(B, "save", fail)
+    assert client.delete("/api/journal").status_code == 502
+    assert len(client.get("/api/journal").json()["orders"]) == 1  # nothing lost when the backup fails

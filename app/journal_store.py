@@ -1,7 +1,11 @@
 """Storage for the trade log: Postgres when DATABASE_URL is set, otherwise a local SQLite file.
 
 Render's free web service loses its disk on every deploy or restart, so a public deployment
-needs DATABASE_URL (any Postgres, e.g. a free Neon or Supabase database) to keep the log.
+needs DATABASE_URL (Neon Postgres, see neon.ts) to keep the log.
+
+On Neon, DATABASE_URL is the pooled (-pooler, PgBouncer) endpoint used for queries, and
+DATABASE_URL_UNPOOLED the direct one used to create the table. The pool keeps no idle
+connections (min_size=0) so the database can scale to zero while nobody is trading.
 """
 from __future__ import annotations
 
@@ -71,30 +75,30 @@ class PostgresStore(Store):
     persistent = True
     p = "%s"
 
-    def __init__(self, url: str):
+    def __init__(self, url: str, direct_url: str | None = None):
         import psycopg  # only needed when DATABASE_URL is set
+        from psycopg_pool import ConnectionPool
 
-        self._psycopg = psycopg
-        self.url = url
-        with self._conn() as c:
+        # DDL over the direct connection, as Neon recommends for schema changes.
+        with psycopg.connect(direct_url or url, autocommit=True, connect_timeout=15) as c:
             c.execute(SCHEMA)
-
-    def _conn(self):
-        return self._psycopg.connect(self.url, autocommit=True, connect_timeout=10)
+        # prepare_threshold=None: no server-side prepared statements through PgBouncer.
+        self._pool = ConnectionPool(url, min_size=0, max_size=4, max_idle=60, timeout=20, open=True,
+                                    kwargs={"autocommit": True, "prepare_threshold": None, "connect_timeout": 15})
 
     def _rows(self, sql, args=()):
-        with self._conn() as c:
+        with self._pool.connection() as c:
             return c.execute(sql, args).fetchall()
 
     def _write(self, sql, rows):
-        with self._conn() as c, c.transaction(), c.cursor() as cur:
+        with self._pool.connection() as c, c.transaction(), c.cursor() as cur:
             cur.executemany(sql, rows)
 
 
 def open_store() -> Store:
     url = os.environ.get("DATABASE_URL", "").strip()
     if url:
-        return PostgresStore(url)
+        return PostgresStore(url, os.environ.get("DATABASE_URL_UNPOOLED", "").strip() or None)
     path = os.environ.get("MC_JOURNAL_DB", "").strip()
     # An explicit path is taken to be on a persistent disk; the default one is not on Render.
     return SqliteStore(path or DEFAULT_SQLITE, persistent=bool(path))

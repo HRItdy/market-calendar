@@ -10,5 +10,16 @@ services:
       # Trade log: the key unlocks it in the page; DATABASE_URL (any Postgres) keeps it across restarts.
       - key: MC_JOURNAL_KEY
         sync: false
-      - key: DATABASE_URL
+      - key: DATABASE_URL            # Neon pooled connection string
+        sync: false
+      - key: DATABASE_URL_UNPOOLED   # Neon direct connection, used to create the table
+        sync: false
+      # Neon Object Storage (trade-log backups); values from .env.local after `neon deploy`
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: AWS_ENDPOINT_URL_S3
+        sync: false
+      - key: AWS_REGION
         sync: false

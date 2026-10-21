@@ -2,3 +2,8 @@ __pycache__/
 .pytest_cache/
 tests/
 .git/
+node_modules/
+.env.local
+.neon
+neon.ts
+package*.json

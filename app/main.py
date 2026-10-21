@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from . import backups as B
 from . import events as E
 from . import journal as J
 from . import quotes as Q
@@ -35,6 +36,10 @@ async def _track_journal():
             await asyncio.to_thread(J.track_once)
         except Exception as exc:  # never let the tracker die
             J.log.warning("journal tracker: %s", exc)
+        try:
+            await asyncio.to_thread(B.daily, lambda: J.store().all())
+        except Exception as exc:
+            J.log.warning("journal backup: %s", exc)
         await asyncio.sleep(J.TRACK_SEC)
 
 
@@ -205,7 +210,7 @@ def _journal_auth(key: str | None) -> None:
 
 def _journal_info() -> dict:
     s = J.store()
-    return {"persistent": s.persistent, "storage": s.kind, "min_conf": J.MIN_CONF, "track_sec": J.TRACK_SEC}
+    return {"persistent": s.persistent, "storage": s.kind, "backups": B.enabled(), "min_conf": J.MIN_CONF, "track_sec": J.TRACK_SEC}
 
 
 Interval = Literal["1m", "5m", "15m", "1h", "1d"]
@@ -279,7 +284,32 @@ def journal_import(body: ImportIn, x_journal_key: str | None = Header(None)):
 def journal_clear(x_journal_key: str | None = Header(None)):
     _journal_auth(x_journal_key)
     with J._lock:
+        orders = J.store().all()
+        if orders:
+            try:
+                B.save(orders, "before-clear")  # so "Clear log" can be undone
+            except Exception as exc:
+                raise HTTPException(502, f"backup before clearing failed, log kept: {exc}")
         J.store().clear()
+
+
+@app.get("/api/journal/backups")
+def journal_backups(x_journal_key: str | None = Header(None)):
+    _journal_auth(x_journal_key)
+    return {"enabled": B.enabled(), "bucket": B.BUCKET, "backups": B.list_backups()}
+
+
+@app.get("/api/journal/backups/{key:path}")
+def journal_backup(key: str, x_journal_key: str | None = Header(None)):
+    _journal_auth(x_journal_key)
+    if not B.enabled():
+        raise HTTPException(404, "backups are not configured")
+    try:
+        return B.load(key)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    except Exception as exc:
+        raise HTTPException(404, f"backup not found: {exc}")
 
 
 @app.get("/markets", include_in_schema=False)

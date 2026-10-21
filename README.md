@@ -25,7 +25,10 @@ The public copy runs with `MC_READ_ONLY=1`, so visitors can browse but not add o
 | Variable | Purpose |
 |---|---|
 | `MC_JOURNAL_KEY` | Any long secret. The page asks for it once per device; without it the log can't be read or changed. On a read-only deployment the log is off until this is set. |
-| `DATABASE_URL` | A Postgres connection string (e.g. a free [Neon](https://neon.tech) database). Render's free web service loses its disk on every restart, so without this the log is temporary (the page warns about it). Locally the log uses `app/data/journal.db` (SQLite); `MC_JOURNAL_DB` points it at another file. | The Dockerfile works on any container host (Fly.io, Railway, Cloud Run).
+| `DATABASE_URL`, `DATABASE_URL_UNPOOLED` | Neon Postgres: pooled string for queries, direct one for creating the table. Render's free web service loses its disk on every restart, so without these the log is temporary (the page warns about it). Locally the log uses `app/data/journal.db` (SQLite); `MC_JOURNAL_DB` points it at another file. |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOINT_URL_S3`, `AWS_REGION` | Neon Object Storage for trade-log snapshots (daily, and before "Clear log"). Optional. |
+
+**Neon** (`neon.ts` declares Postgres and the `assets` bucket): `neon deploy` provisions them and writes the variables above to `.env.local` (git-ignored); copy them into Render's Environment. Run locally with them via `npm run dev` (`neon-env run -- uvicorn …`); `npm test` runs both test suites. The Dockerfile works on any container host (Fly.io, Railway, Cloud Run).
 
 ## Features
 
@@ -80,7 +83,8 @@ Typical-move figures are rough post-2020 historical tendencies. **They are not f
 | `POST /api/journal/orders` | Place an order from a read: `{sym, label, group, interval, theories, bias, confidence, price, entry, stop, targets, rr, barTime, feed}` |
 | `POST /api/journal/orders/{id}/close` | Close at `{price}` (or the last tracked price) |
 | `POST /api/journal/import` | Bulk-add orders saved in a browser before the log moved to the server |
-| `DELETE /api/journal` | Clear the log |
+| `DELETE /api/journal` | Clear the log (snapshots it to the bucket first) |
+| `GET /api/journal/backups`, `GET /api/journal/backups/{key}` | List / download trade-log snapshots; restore one by POSTing its `orders` to `/api/journal/import` |
 | `GET /api/calendar.ics?importance=high&importance=medium` | iCalendar feed |
 
 Interactive docs are at `/docs`.
@@ -100,6 +104,8 @@ static/combine.js    Merges the selected theories into one read and trade plan
 static/journal.js    Trade log summary helpers (win rate, P&L, CSV)
 app/journal.py    Trade log rules and the server-side price tracker
 app/journal_store.py  Trade log storage: Postgres (DATABASE_URL) or SQLite
+app/backups.py    Trade log snapshots in Neon Object Storage
+neon.ts           Neon services (Postgres, bucket) for `neon deploy`
 app/events.py     Event generation, cross-event annotations, risk score
 app/main.py       FastAPI routes
 static/           Frontend (vanilla JS, no build step)

@@ -39,6 +39,9 @@ BINANCE_KLINES = "https://data-api.binance.vision/api/v3/klines"
 
 _lock = threading.RLock()  # serialises read-modify-write between API calls and the tracker
 _store: journal_store.Store | None = None
+# Whether any order may be active. This process is the only writer, so once the tracker has seen
+# none it can skip the database until an order is placed or imported (lets Neon scale to zero).
+_maybe_active = True
 
 
 def store() -> journal_store.Store:
@@ -49,8 +52,14 @@ def store() -> journal_store.Store:
 
 
 def set_store(s: journal_store.Store | None) -> None:
-    global _store
+    global _store, _maybe_active
     _store = s
+    _maybe_active = True
+
+
+def _mark_active() -> None:
+    global _maybe_active
+    _maybe_active = True
 
 
 def now_ms() -> int:
@@ -138,6 +147,7 @@ def place(sig: dict, at: int | None = None) -> dict:
         }
         changed.append(o)
         s.save(changed)
+        _mark_active()
         return o
 
 
@@ -164,6 +174,7 @@ def import_orders(orders: list[dict]) -> int:
             o.setdefault("key", f"{o['sym']}|{o['interval']}")
             o.setdefault("seen", o.get("placedAt"))
         s.save(new)
+        _mark_active()
         return len(new)
 
 
@@ -221,8 +232,14 @@ def feed_bars(feed: dict, since: int) -> list[dict]:
 
 def track_once(fetch=feed_bars) -> int:
     """Bring every active order up to date. Returns how many orders changed status."""
+    global _maybe_active
+    if not _maybe_active:
+        return 0
     with _lock:
         active = store().active()
+        if not active:
+            _maybe_active = False
+            return 0
     by_feed: dict[str, list[dict]] = defaultdict(list)
     for o in active:
         if o.get("feed"):

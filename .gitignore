@@ -3,3 +3,6 @@ __pycache__/
 .venv/
 app/data/custom_events.json
 app/data/journal.db
+.neon
+node_modules/
+.env.local
