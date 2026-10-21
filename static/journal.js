@@ -1,5 +1,5 @@
-/* Paper-trading journal: records an order whenever the combined read says BUY or SELL with
- * confidence above MIN_CONF, then follows price to decide whether it made or lost money.
+/* Paper-trading journal: when the combined read says BUY or SELL with confidence above MIN_CONF,
+ * the viewer can place an order; it is recorded and followed to decide whether it made or lost money.
  *
  * Rules (simple and deterministic, so the log is easy to audit):
  *   - One active order per symbol + interval. A same-side signal while one is active is ignored;
@@ -8,7 +8,6 @@
  *     cancelled if not filled within PENDING_BARS bars of its interval.
  *   - Exit at the stop or at Target 1, whichever price reaches first. If one bar spans both,
  *     the stop is assumed to have come first (conservative). Gaps fill at the gapped price.
- *   - No new order on the same bar, same side, right after the previous one closed (no churn).
  *   - Result: P&L % = side × (exit − fill) / fill; R = side × (exit − fill) / |fill − stop|.
  */
 (function (root) {
@@ -47,9 +46,6 @@
     if (active) {
       if (active.side === sig.bias) return null;
       closeOrder(active, sig.price, "reversed", at);
-    } else {
-      const prev = mine.at(-1);
-      if (prev && prev.side === sig.bias && prev.barTime === sig.barTime) return null;
     }
     const market = sig.entry === sig.price;
     const o = {

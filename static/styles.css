@@ -263,6 +263,9 @@ h2 { font-size: 16px; }
 .conf-bar { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
 .conf-bar i { display: block; height: 100%; background: var(--accent); }
 .conf b { color: var(--ink); }
+.order-btn { width: 100%; justify-content: center; margin-top: 10px; border: 0; }
+.order-btn.buy { background: #16a34a; } .order-btn.sell { background: #dc2626; }
+.order-note { margin: 8px 0 0; font-size: 11px; color: var(--muted); }
 .of-score { font-size: 11px; color: var(--muted); margin-top: 6px; font-variant-numeric: tabular-nums; }
 .of-plan { display: grid; gap: 4px; }
 .plan-row { display: flex; justify-content: space-between; gap: 10px; padding: 5px 8px; border-radius: 6px; background: var(--panel); border: 1px solid var(--line); font-variant-numeric: tabular-nums; }

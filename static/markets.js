@@ -435,15 +435,26 @@ class Panel {
     journalChanged();
   }
 
-  journalSignal(c) {
-    if (this.marketClosed || !this.bars?.length) return;
+  // Order button on the read card: offered only for a BUY/SELL read above the confidence bar.
+  orderOffer(c) {
+    if (!c || c.bias === "wait") return null;
+    if (!(c.confidence > Journal.MIN_CONF)) return { note: "needConf" };
+    if (this.marketClosed) return { note: "closedMkt" };
+    const act = journal.orders.find((o) => o.key === `${this.sym.id}|${state.interval}` && Journal.isActive(o));
+    if (act?.side === c.bias) return { note: "alreadyOpen" };
+    return { reverse: act?.side ?? null };
+  }
+
+  placeOrder() {
+    const c = this.res?.combined;
+    if (!this.orderOffer(c) || this.orderOffer(c).note || !this.bars?.length) return;
     const s = this.sym;
     const o = Journal.onSignal(journal.orders, {
       key: `${s.id}|${state.interval}`, sym: s.id, label: s.label, group: this.g.key, interval: state.interval,
       theories: THEORIES.filter(on), bias: c.bias, confidence: c.confidence, price: c.price,
       entry: c.entry, stop: c.stop, targets: c.targets, rr: c.rr, barTime: this.bars.at(-1).time,
     });
-    if (o) { journalChanged(); journalFlush(); renderJournal(); }
+    if (o) { journalChanged(); journalFlush(); journalRefresh(); }
   }
 
   barIndexAt(sec) {
@@ -483,7 +494,6 @@ class Panel {
       });
     }
     this.res = res;
-    if (res.combined) this.journalSignal(res.combined);
     this.drawSeries();
     this.drawPriceLines();
     this.drawMarkers();
@@ -822,18 +832,29 @@ class Panel {
           <div class="bias-sub">${esc(c.conflict ? L.conflict : L.biasSub[c.bias])}</div>
           <div class="conf"><span>${esc(L.confidence)}</span><div class="conf-bar"><i style="width:${c.confidence}%"></i></div><b>${c.confidence}%</b></div>
           <div class="of-score">${esc(L.score)} ${c.mean > 0 ? "+" : ""}${c.mean.toFixed(2)}${c.bias !== "wait" && c.per.length > 1 ? ` · ${esc(L.agreeN(agreeing, c.per.length))}` : ""}</div>
+          ${this.orderHtml(c)}
         </div>
         <div class="of-plan">${plan}</div>
         <div class="th-groups">${groups}</div>
       </div>
       ${notes.length ? `<p class="of-note">${notes.map(esc).join(" · ")}</p>` : ""}
       ${r.chan ? this.chanListHtml() : ""}`;
+    const ob = $(".order-btn", card);
+    if (ob) ob.onclick = () => this.placeOrder();
     card.querySelectorAll(".pt-row").forEach((row) => {
       row.onclick = () => {
         const i = +row.dataset.idx;
         this.chart.timeScale().setVisibleLogicalRange({ from: i - 90, to: i + 40 });
       };
     });
+  }
+
+  orderHtml(c) {
+    const offer = this.orderOffer(c), J = I18N[state.lang].J;
+    if (!offer) return "";
+    if (offer.note) return `<p class="order-note">${esc(J[offer.note](Journal.MIN_CONF, c.bias))}</p>`;
+    return `<button class="btn order-btn ${c.bias}">${esc(J.placeBtn[c.bias])}</button>` +
+      (offer.reverse ? `<p class="order-note">${esc(J.reverseNote[offer.reverse])}</p>` : "");
   }
 
   chanListHtml() {
@@ -951,6 +972,11 @@ async function loadEvents() {
 const jLabel = (o) => (typeof o.label === "string" ? o.label : o.label?.[state.lang] ?? o.sym);
 const jStatus = (o) => (o.status === "pending" || o.status === "open" ? o.status : o.status === "cancelled" && o.exitReason !== "expired" ? "cancelled" : o.exitReason);
 
+function journalRefresh() {
+  renderJournal();
+  panels.forEach((p) => { p.drawMarkers(); p.renderAnalysis(); });
+}
+
 function renderJournal() {
   const box = $("#journal");
   if (!box) return;
@@ -1009,8 +1035,7 @@ function renderJournal() {
       const o = journal.orders.find((x) => x.id === b.dataset.id);
       if (!o || !Journal.isActive(o)) return;
       Journal.closeOrder(o, o.last, "manual", Date.now());
-      journalChanged(); journalFlush(); renderJournal();
-      panels.forEach((p) => p.drawMarkers());
+      journalChanged(); journalFlush(); journalRefresh();
     };
   });
   box.querySelectorAll(".j-mkt").forEach((b) => {
@@ -1032,8 +1057,7 @@ function renderJournal() {
     if (!confirm(J.confirmClear)) return;
     journal.orders = [];
     save(JOURNAL_KEY, journal.orders);
-    renderJournal();
-    panels.forEach((p) => p.drawMarkers());
+    journalRefresh();
   };
 }
 
@@ -1105,8 +1129,7 @@ window.addEventListener("pagehide", journalFlush);
 window.addEventListener("storage", (e) => {
   if (e.key !== JOURNAL_KEY) return;
   journal.orders = load(JOURNAL_KEY, []);
-  renderJournal();
-  panels.forEach((p) => p.drawMarkers());
+  journalRefresh();
 });
 
 applyStaticText();

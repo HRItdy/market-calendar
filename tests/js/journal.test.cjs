@@ -80,14 +80,6 @@ test("an opposite signal closes the active order and opens the new one", () => {
   assert.equal(orders.length, 2);
 });
 
-test("no re-entry on the same bar and side right after a stop-out", () => {
-  const orders = [];
-  const a = J.onSignal(orders, sig(), T0);
-  J.onPrice(a, tick(94), T0 + 1);
-  assert.equal(J.onSignal(orders, sig({ price: 94, entry: 94, stop: 90 }), T0 + 2), null);
-  assert.ok(J.onSignal(orders, sig({ price: 94, entry: 94, stop: 90, barTime: 2 }), T0 + 3));
-});
-
 test("stats summarise wins, losses and open P&L; CSV has one row per order", () => {
   const orders = [];
   const w = J.onSignal(orders, sig({ key: "A" }), T0); J.onPrice(w, tick(110), T0 + 1);
